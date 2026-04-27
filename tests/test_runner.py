@@ -10,7 +10,12 @@ from fhe_attack_replay.attacks.base import AttackStatus
 def test_run_against_synthetic_openfhe_target():
     report = run(
         library="openfhe",
-        params={"scheme": "BFV", "constant_time_decrypt": False},
+        params={
+            "scheme": "BFV",
+            "constant_time_decrypt": False,
+            "replay_trials": 2,
+            "bisect_rounds": 16,
+        },
         attacks=None,
     )
     assert report.library == "openfhe"
@@ -32,7 +37,11 @@ def test_run_with_subset_of_attacks():
 
 
 def test_report_serializes_to_json():
-    report = run(library="openfhe", params={"scheme": "BFV"}, attacks=["cheon-2024-127"])
+    report = run(
+        library="openfhe",
+        params={"scheme": "BFV", "replay_trials": 2, "bisect_rounds": 16},
+        attacks=["cheon-2024-127"],
+    )
     payload = json.loads(json.dumps(report.to_dict()))
     assert payload["library"] == "openfhe"
     assert payload["overall_status"] in {s.value for s in AttackStatus}
@@ -99,4 +108,12 @@ def test_constant_time_decrypt_marks_eprint_2025_867_safe_and_overall_safe():
     assert report.coverage.safe == 1
     assert report.coverage.ran == 1
     assert report.coverage.implemented == 1
+    assert report.coverage.ratio == 1.0
+
+
+def test_seal_fingerprint_marks_eprint_2025_867_vulnerable():
+    report = run(library="seal", params={"scheme": "CKKS"}, attacks=["eprint-2025-867"])
+    assert report.results[0].status is AttackStatus.VULNERABLE
+    assert report.overall_status is AttackStatus.VULNERABLE
+    assert report.coverage.vulnerable == 1
     assert report.coverage.ratio == 1.0

@@ -42,8 +42,9 @@ def test_cli_doctor(capsys):
 
 
 def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Path):
-    # Use seal (still a scaffold adapter without live bindings) so every
-    # attack module returns NOT_IMPLEMENTED, exercising the strict-exit path.
+    # Use lattigo (still a scaffold adapter without helper bindings) so at
+    # least one selected attack returns NOT_IMPLEMENTED, exercising the
+    # strict-exit path without triggering the SEAL side-channel RiskCheck.
     params = tmp_path / "params.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
     out = tmp_path / "report.json"
@@ -52,7 +53,7 @@ def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Pat
         [
             "run",
             "--lib",
-            "seal",
+            "lattigo",
             "--params",
             str(params),
             "--output-json",
@@ -65,7 +66,7 @@ def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Pat
     # Default: NOT_IMPLEMENTED is a hard fail.
     assert rc == EXIT_NOT_IMPLEMENTED
     payload = json.loads(out.read_text())
-    assert payload["library"] == "seal"
+    assert payload["library"] == "lattigo"
     assert "coverage" in payload
     assert payload["coverage"]["requested"] >= 1
     assert badge.read_text().startswith("<svg")
@@ -122,9 +123,13 @@ def test_cli_run_min_coverage_accepts_full_coverage(tmp_path: Path):
     params.write_text(
         json.dumps(
             {
-                "scheme": "BFV",
-                "adversary_model": "ind-cpa-d",
-                "noise_flooding": "noise-flooding",
+                "scheme": "LWE",
+                "n": 16,
+                "q": 32768,
+                "t": 256,
+                "noise_bound": 2,
+                "noise_flooding_sigma": 128.0,
+                "seed": 7,
             }
         )
     )
@@ -133,7 +138,7 @@ def test_cli_run_min_coverage_accepts_full_coverage(tmp_path: Path):
         [
             "run",
             "--lib",
-            "openfhe",
+            "toy-lwe",
             "--params",
             str(params),
             "--attacks",

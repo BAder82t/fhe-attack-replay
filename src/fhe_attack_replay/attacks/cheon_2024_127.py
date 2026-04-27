@@ -65,7 +65,8 @@ class Cheon2024_127(Attack):
 
     - **Replay (live oracle)**: when the adapter exposes live encrypt/decrypt
       primitives (currently ``toy-lwe`` always, ``openfhe`` when
-      ``openfhe-python`` is importable), the module encrypts ``0``, runs
+      ``openfhe-python`` is importable), the module encrypts ``0``, perturbs
+      the ciphertext polynomial toward the decryption rounding boundary, runs
       a binary search on the decryption oracle to recover the encryption
       noise, and repeats the procedure across multiple trials. Without
       noise-flooding decrypt, the recovered noise is a fixed leak across
@@ -105,8 +106,6 @@ class Cheon2024_127(Attack):
     def run(self, adapter: LibraryAdapter, ctx: AdapterContext) -> AttackResult:
         if adapter.name in _REPLAY_CAPABLE_ADAPTERS and adapter.is_available():
             try:
-                if adapter.name == "openfhe":
-                    return self._run_replay_openfhe(adapter, ctx)
                 return self._run_replay(adapter, ctx)
             except NotImplementedError:
                 # Adapter advertised the name but cannot actually run primitives
@@ -124,101 +123,26 @@ class Cheon2024_127(Attack):
                 )
         return self._run_risk_check(adapter, ctx)
 
-    # ------------------------------------------------------ openfhe replay --
-    def _run_replay_openfhe(
-        self, adapter: LibraryAdapter, ctx: AdapterContext
-    ) -> AttackResult:
-        """Decryption-oracle-determinism replay against OpenFHE.
-
-        The full Cheon-Hong-Kim 2024/127 attack constructs a ciphertext at
-        the rounding boundary and observes structured decryption errors
-        across queries. ``openfhe-python`` does not expose the DCRTPoly
-        primitives needed for fine-grained ciphertext perturbation, so we
-        run the *necessary precondition* of the attack instead: query the
-        decryption oracle on the same ciphertext repeatedly and observe
-        whether the oracle is deterministic. A deterministic oracle is
-        precisely what the published attack relies on; a randomized
-        oracle (e.g. CKKS NOISE_FLOODING_DECRYPT) breaks the noise-recovery
-        primitive at the source.
-        """
-        ct = adapter.encrypt(ctx, [0])
-        decryptions: list[tuple[Any, ...]] = []
-        for _ in range(_REPLAY_TRIALS):
-            pt = adapter.decrypt(ctx, ct)
-            # Truncate packed slots so the comparison is bounded.
-            decryptions.append(tuple(list(pt)[:8]))
-        unique = len({d for d in decryptions})
-        deterministic = unique == 1
-
-        evidence: dict[str, Any] = {
-            "mode": "replay",
-            "intent_actual": AttackIntent.REPLAY.value,
-            "trials": _REPLAY_TRIALS,
-            "test": "decryption_oracle_determinism",
-            "unique_decryptions": unique,
-            "deterministic_oracle": deterministic,
-            "decryption_sample": list(decryptions[0]) if decryptions else [],
-            "citation": self.citation.url if self.citation else "",
-            "reference_poc": "https://github.com/hmchoe0528/INDCPAD_HE_ThresFHE",
-            "library": adapter.name,
-            "library_class": "production",
-            "note": (
-                "Subset of the Cheon-Hong-Kim attack precondition. "
-                "Polynomial-domain bisection requires DCRTPoly access not "
-                "exposed by openfhe-python; see "
-                "src/fhe_attack_replay/attacks/cheon_2024_127.py."
-            ),
-        }
-
-        if deterministic:
-            return AttackResult(
-                attack=self.id,
-                library=adapter.name,
-                scheme=ctx.scheme,
-                status=AttackStatus.VULNERABLE,
-                duration_seconds=0.0,
-                evidence=evidence,
-                message=(
-                    f"Live-oracle replay against {adapter.name}: the "
-                    f"decryption oracle returned identical plaintext across "
-                    f"{_REPLAY_TRIALS} queries on the same ciphertext. The "
-                    "oracle is deterministic — the Cheon-Hong-Kim 2024/127 "
-                    "noise-recovery primitive applies. Enable a noise-flooded "
-                    "decrypt mode (e.g. OpenFHE NOISE_FLOODING_DECRYPT for "
-                    "CKKS in EXEC_EVALUATION) to mitigate."
-                ),
-            )
-
-        return AttackResult(
-            attack=self.id,
-            library=adapter.name,
-            scheme=ctx.scheme,
-            status=AttackStatus.SAFE,
-            duration_seconds=0.0,
-            evidence=evidence,
-            message=(
-                f"Live-oracle replay against {adapter.name}: the decryption "
-                f"oracle returned {unique} distinct plaintexts across "
-                f"{_REPLAY_TRIALS} queries on the same ciphertext. The oracle "
-                "is randomized; the Cheon-Hong-Kim 2024/127 noise-recovery "
-                "primitive does not converge."
-            ),
-        )
-
     # --------------------------------------------------------------- replay --
     def _run_replay(self, adapter: LibraryAdapter, ctx: AdapterContext) -> AttackResult:
         import numpy as np  # local import keeps numpy out of import-time critical path
 
         ct_zero = adapter.encrypt(ctx, 0)
+        trials = self._replay_trials_for(ctx)
+        delta = self._delta_for(adapter, ctx, ct_zero)
+        bisect_rounds = self._bisect_rounds_for(ctx, delta)
         # Recover the encryption-noise boundary independently in each trial.
         # Without noise flooding, the boundary is fixed (deterministic decrypt).
         # With noise flooding, the boundary is a random variable.
         boundaries: list[int] = []
-        for _ in range(_REPLAY_TRIALS):
-            boundaries.append(self._bisect_boundary(adapter, ctx, ct_zero))
+        for _ in range(trials):
+            boundaries.append(
+                self._bisect_boundary(
+                    adapter, ctx, ct_zero, rounds=bisect_rounds, delta=delta
+                )
+            )
 
         boundaries_arr = np.asarray(boundaries, dtype=np.float64)
-        delta = self._delta_for(ctx)
         mean_b = float(boundaries_arr.mean())
         std_b = float(boundaries_arr.std(ddof=0))
         threshold = max(1.0, _REPLAY_VARIANCE_MIN_FRAC_DELTA * float(delta))
@@ -227,8 +151,8 @@ class Cheon2024_127(Attack):
         evidence: dict[str, Any] = {
             "mode": "replay",
             "intent_actual": AttackIntent.REPLAY.value,
-            "trials": _REPLAY_TRIALS,
-            "bisect_rounds": _REPLAY_BISECT_ROUNDS,
+            "trials": trials,
+            "bisect_rounds": bisect_rounds,
             "delta": int(delta),
             "boundary_mean": mean_b,
             "boundary_std": std_b,
@@ -244,6 +168,17 @@ class Cheon2024_127(Attack):
                 else "production"
             ),
         }
+        if adapter.name == "openfhe":
+            metadata = adapter.polynomial_replay_metadata(ctx, ct_zero)  # type: ignore[attr-defined]
+            evidence.update(
+                {
+                    "test": "polynomial_domain_bisection",
+                    "polynomial_component": 0,
+                    **metadata,
+                }
+            )
+        else:
+            evidence["test"] = "decrypt_boundary_bisection"
 
         if deterministic:
             return AttackResult(
@@ -284,6 +219,9 @@ class Cheon2024_127(Attack):
         adapter: LibraryAdapter,
         ctx: AdapterContext,
         ct_zero: Any,
+        *,
+        rounds: int,
+        delta: int,
     ) -> int:
         """Binary-search the smallest positive offset that flips decryption.
 
@@ -293,17 +231,15 @@ class Cheon2024_127(Attack):
         toy-lwe adapter exposes it directly via ctx.handles).
         """
         if adapter.name == "toy-lwe":
-            return self._bisect_boundary_toy_lwe(ctx, ct_zero)
-        # OpenFHE polynomial-domain perturbation requires C++ access to the
-        # underlying DCRTPoly that openfhe-python does not expose. We fall
-        # back to a different but valid form of the Cheon attack —
-        # decryption-oracle determinism — handled in _run_replay_openfhe.
+            return self._bisect_boundary_toy_lwe(ctx, ct_zero, rounds=rounds)
+        if adapter.name == "openfhe":
+            return self._bisect_boundary_openfhe(adapter, ctx, ct_zero, rounds, delta)
         raise NotImplementedError(
             f"Live-bisect not yet wired for adapter {adapter.name!r}."
         )
 
     def _bisect_boundary_toy_lwe(
-        self, ctx: AdapterContext, ct_zero: Any
+        self, ctx: AdapterContext, ct_zero: Any, *, rounds: int
     ) -> int:
         from fhe_attack_replay.lab.toy_lwe import bisect_decrypt_boundary
 
@@ -311,16 +247,72 @@ class Cheon2024_127(Attack):
         keys = ctx.handles["keys"]
         rng = ctx.handles["rng"]
         return bisect_decrypt_boundary(
-            toy, keys, ct_zero, rng, rounds=_REPLAY_BISECT_ROUNDS
+            toy, keys, ct_zero, rng, rounds=rounds
         )
 
-    def _delta_for(self, ctx: AdapterContext) -> int:
+    def _bisect_boundary_openfhe(
+        self,
+        adapter: LibraryAdapter,
+        ctx: AdapterContext,
+        ct_zero: Any,
+        rounds: int,
+        delta: int,
+    ) -> int:
+        perturb = getattr(adapter, "perturb_ciphertext_constant", None)
+        if perturb is None:
+            raise NotImplementedError("OpenFHE adapter lacks ciphertext perturbation.")
+
+        baseline = tuple(list(adapter.decrypt(ctx, ct_zero))[:8])
+        if not baseline:
+            raise NotImplementedError("OpenFHE replay requires packed decrypt output.")
+
+        def flips(offset: int) -> bool:
+            perturbed = perturb(ctx, ct_zero, offset, component=0)
+            decrypted = tuple(list(adapter.decrypt(ctx, perturbed))[: len(baseline)])
+            return decrypted != baseline
+
+        low = 0
+        high = max(1, int(delta))
+        for _ in range(8):
+            if flips(high):
+                break
+            high *= 2
+        else:
+            raise NotImplementedError(
+                "OpenFHE polynomial perturbation did not cross the decrypt boundary."
+            )
+
+        for _ in range(rounds):
+            mid = (low + high) // 2
+            if flips(mid):
+                high = mid
+            else:
+                low = mid
+        return high
+
+    def _delta_for(
+        self, adapter: LibraryAdapter, ctx: AdapterContext, ct_zero: Any
+    ) -> int:
         toy = ctx.handles.get("toy") if ctx.handles else None
         if toy is not None:
             return int(toy.delta)
+        if adapter.name == "openfhe":
+            plaintext_delta = getattr(adapter, "plaintext_delta", None)
+            if plaintext_delta is None:
+                raise NotImplementedError("OpenFHE adapter lacks plaintext_delta().")
+            return int(plaintext_delta(ctx, ct_zero))
         # Fallback: arbitrary unit when delta is not available — the
         # threshold becomes effectively 1.0 in raw integer-modulus units.
         return 1
+
+    def _replay_trials_for(self, ctx: AdapterContext) -> int:
+        return max(1, int(ctx.params.get("replay_trials", _REPLAY_TRIALS)))
+
+    def _bisect_rounds_for(self, ctx: AdapterContext, delta: int) -> int:
+        configured = ctx.params.get("bisect_rounds")
+        if configured is not None:
+            return max(1, int(configured))
+        return max(_REPLAY_BISECT_ROUNDS, int(delta).bit_length())
 
     # ------------------------------------------------------------ risk check -
     def _run_risk_check(

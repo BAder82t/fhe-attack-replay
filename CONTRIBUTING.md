@@ -13,6 +13,8 @@ python -m venv .venv && source .venv/bin/activate
 python -m pip install -e ".[dev]"
 ruff check .
 pytest -ra --cov=fhe_attack_replay
+python -m build
+python -m twine check dist/*
 ```
 
 Python 3.11+ is required (`StrEnum`, PEP 695-friendly typing).
@@ -60,6 +62,8 @@ A new attack module under `src/fhe_attack_replay/attacks/` should:
 ## Coding style
 
 - `ruff check .` must pass.
+- `pytest -ra --cov=fhe_attack_replay` must pass.
+- `python -m build && python -m twine check dist/*` must pass before release.
 - New code should carry the file header `Copyright 2026 Vaultbytes (Bader
   Issaei)` and `SPDX-License-Identifier: Apache-2.0`.
 - Public APIs go in `__all__` of the relevant `__init__.py`.

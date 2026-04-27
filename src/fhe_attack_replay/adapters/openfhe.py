@@ -13,6 +13,8 @@ context when the native build is missing.
 from __future__ import annotations
 
 import importlib
+import json
+import math
 from typing import Any
 
 from fhe_attack_replay.adapters.base import (
@@ -132,6 +134,102 @@ class OpenFHEAdapter(LibraryAdapter):
         if scheme in ("BFV", "BGV"):
             return pt.GetPackedValue()
         return pt.GetCKKSPackedValue()
+
+    def plaintext_modulus(self, ctx: AdapterContext) -> int:
+        """Return the exact plaintext modulus for integer OpenFHE schemes."""
+        if ctx.handles["scheme"] not in ("BFV", "BGV"):
+            raise NotImplementedError(
+                "OpenFHE polynomial-domain replay is only wired for BFV/BGV."
+            )
+        return int(ctx.handles["cc"].GetPlaintextModulus())
+
+    def ciphertext_moduli(self, ctx: AdapterContext, ciphertext: Any) -> tuple[int, ...]:
+        """Return the DCRT tower moduli for ciphertext component c0.
+
+        The Python binding exposes ``Ciphertext.GetElements`` but not enough
+        mutable DCRTPoly methods for attack construction. JSON serialization
+        preserves the tower representation, so the replay path uses it as the
+        narrow compatibility layer.
+        """
+        payload = self._serialize_ciphertext(ctx, ciphertext)
+        return self._component_moduli(payload, component=0)
+
+    def ciphertext_modulus(self, ctx: AdapterContext, ciphertext: Any) -> int:
+        return math.prod(self.ciphertext_moduli(ctx, ciphertext))
+
+    def plaintext_delta(self, ctx: AdapterContext, ciphertext: Any) -> int:
+        """Return floor(Q / t), the BFV/BGV plaintext scaling factor."""
+        return self.ciphertext_modulus(ctx, ciphertext) // self.plaintext_modulus(ctx)
+
+    def perturb_ciphertext_constant(
+        self,
+        ctx: AdapterContext,
+        ciphertext: Any,
+        offset: int,
+        *,
+        component: int = 0,
+    ) -> Any:
+        """Add a constant polynomial to a ciphertext component.
+
+        OpenFHE serializes BFV/BGV ciphertext DCRT polynomials in evaluation
+        form. Adding the same residue to every slot in each RNS tower is the
+        evaluation-domain representation of adding a constant polynomial. The
+        Cheon replay uses this to move an encryption of zero across the
+        decryption rounding boundary.
+        """
+        payload = self._serialize_ciphertext(ctx, ciphertext)
+        towers = self._component_towers(payload, component=component)
+        for tower in towers:
+            data = tower["v"]["ptr_wrapper"]["data"]
+            coeffs = data["v"]
+            modulus = int(data["m"]["v"])
+            residue = int(offset) % modulus
+            for idx, coeff in enumerate(coeffs):
+                coeffs[idx] = (int(coeff) + residue) % modulus
+        return self._deserialize_ciphertext(ctx, payload)
+
+    def polynomial_replay_metadata(
+        self, ctx: AdapterContext, ciphertext: Any
+    ) -> dict[str, Any]:
+        moduli = self.ciphertext_moduli(ctx, ciphertext)
+        modulus = math.prod(moduli)
+        return {
+            "serialization_backend": "openfhe-json",
+            "polynomial_domain": "DCRT evaluation form",
+            "perturbation": "constant polynomial added to ciphertext component c0",
+            "plaintext_modulus": self.plaintext_modulus(ctx),
+            "ciphertext_modulus_bits": modulus.bit_length(),
+            "dcrt_tower_count": len(moduli),
+            "dcrt_moduli_bits": [m.bit_length() for m in moduli],
+        }
+
+    def _serialize_ciphertext(
+        self, ctx: AdapterContext, ciphertext: Any
+    ) -> dict[str, Any]:
+        of = ctx.handles["openfhe"]
+        return json.loads(of.Serialize(ciphertext, of.JSON))
+
+    def _deserialize_ciphertext(
+        self, ctx: AdapterContext, payload: dict[str, Any]
+    ) -> Any:
+        of = ctx.handles["openfhe"]
+        return of.DeserializeCiphertextString(json.dumps(payload), of.JSON)
+
+    @staticmethod
+    def _component_towers(
+        payload: dict[str, Any], *, component: int
+    ) -> list[dict[str, Any]]:
+        components = payload["value0"]["ptr_wrapper"]["data"]["v"]
+        return components[component]["v"]
+
+    @classmethod
+    def _component_moduli(
+        cls, payload: dict[str, Any], *, component: int
+    ) -> tuple[int, ...]:
+        return tuple(
+            int(tower["v"]["ptr_wrapper"]["data"]["m"]["v"])
+            for tower in cls._component_towers(payload, component=component)
+        )
 
     def evaluator_fingerprint(self, ctx: AdapterContext) -> dict[str, Any]:
         cc = ctx.handles.get("cc") if ctx.handles else None

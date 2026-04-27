@@ -145,7 +145,10 @@ def _setup_or_synthetic(
     ERROR or NOT_IMPLEMENTED — by design.
     """
     if adapter.is_available():
-        return adapter.setup(scheme, params)
+        try:
+            return adapter.setup(scheme, params)
+        except NotImplementedError:
+            return AdapterContext(library=adapter.name, scheme=scheme, params=params, handles={})
     return AdapterContext(library=adapter.name, scheme=scheme, params=params, handles={})
 
 

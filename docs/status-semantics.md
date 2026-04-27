@@ -52,9 +52,14 @@ result, in this priority order:
 | `0`  | At least one attack ran and every result was `SAFE`/`SKIPPED` (or `NOT_IMPLEMENTED` with `--allow-not-implemented`). |
 | `2`  | Any `VULNERABLE`.                                                                          |
 | `3`  | Any `ERROR`.                                                                               |
-| `4`  | Any `NOT_IMPLEMENTED` and `--allow-not-implemented` was not passed.                        |
+| `4`  | Any `NOT_IMPLEMENTED` without `--allow-not-implemented`, or a `--min-coverage` failure.    |
 | `5`  | Every selected attack was `SKIPPED` and `--allow-skipped` was not passed.                  |
 | `64` | Usage error (missing `--lib`, malformed args, etc.).                                       |
 
 The default is intentionally strict: silent green CI for runs that did
 not actually exercise an attack is a footgun, not a feature.
+
+`--min-coverage N` adds a second gate after status handling. For example,
+`--min-coverage 1.0` requires every selected attack to produce an implemented
+verdict (`SAFE`, `VULNERABLE`, or `ERROR`). This is useful when a PR should not
+pass with mostly scaffolded or skipped checks.

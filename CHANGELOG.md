@@ -8,16 +8,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - **`cheon-2024-127` now runs as a real live-oracle Replay against
-  OpenFHE BFV/BGV/CKKS via `openfhe-python`.** Decryption-oracle
-  determinism test: encrypts `0`, queries the oracle 8× on the same
-  ciphertext, classifies the oracle as deterministic (VULNERABLE — Cheon
-  applies) or randomized (SAFE). OpenFHE BFV's standard decrypt is
-  deterministic, so this correctly surfaces the IND-CPA-D vulnerability
-  vector. The full polynomial-domain bisection (which would be a
-  stricter form of the published attack) requires DCRTPoly access not
-  exposed by openfhe-python; documented in
-  `src/fhe_attack_replay/attacks/cheon_2024_127.py` and
-  `evidence['note']` of every OpenFHE replay result.
+  OpenFHE BFV/BGV via `openfhe-python`.** The adapter now mutates serialized
+  OpenFHE JSON ciphertexts directly, adding a constant polynomial to
+  ciphertext component `c0` across all DCRT towers, deserializing the
+  ciphertext, and running boundary bisection against the native decrypt
+  oracle. Replay evidence records `test=polynomial_domain_bisection`,
+  `serialization_backend=openfhe-json`, plaintext modulus, ciphertext
+  modulus size, and DCRT tower metadata.
 - **`cheon-2024-127` now runs as a real live-oracle Replay against the
   in-tree `toy-lwe` adapter.** Bisection-based encryption-noise recovery
   across 8 trials of 20 rounds each; verdict driven by the std-dev of the
@@ -62,13 +59,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `DISCLAIMER.md`, `SECURITY.md`, `CONTRIBUTING.md`, `CHANGELOG.md`.
 - GitHub Action inputs `allow-not-implemented` and `allow-skipped`, plus
   output `coverage-ratio`.
+- Root `action.yml`, PR template, CI workflow, publish workflow, and
+  `docs/pr-gates.md`.
+- CLI flag `--min-coverage` to require a minimum implemented-attack ratio
+  in CI gates.
+- `eprint-2025-867` now reports a real RiskCheck `VULNERABLE` verdict for
+  SEAL/TenSEAL fingerprints with known non-constant NTT surfaces.
 
 ### Changed
 - `eprint-2025-867` is now declared as `intent=RISK_CHECK` (it inspects the
-  evaluator fingerprint; the real distinguisher is still pending).
+  evaluator fingerprint; a live trace distinguisher is still pending).
 - `NOT_IMPLEMENTED` now causes a non-zero CLI exit by default. Previously
   it was treated as success, which could yield green CI for runs in
   which no attack actually ran.
+- GitHub Action usage is now `BAder82t/fhe-attack-replay@v0`; the older
+  `action/action.yml` copy remains for compatibility.
 - Badge label now reflects coverage (`X/N implemented`) when any module
   is `NOT_IMPLEMENTED`, instead of "scaffold".
 - README rewritten to describe the project as a *framework* until at

@@ -5,7 +5,8 @@
 > - `toy-lwe` (always available) — bisection-based encryption-noise
 >   recovery across 8 trials of 20 rounds each.
 > - `openfhe` (when `openfhe-python` is built locally) —
->   decryption-oracle determinism test against real OpenFHE BFV/BGV/CKKS.
+>   polynomial-domain bisection against real OpenFHE BFV/BGV using serialized
+>   DCRT ciphertext mutation.
 >
 > Unmitigated configs report `VULNERABLE` (exit 2); noise-flooded configs
 > report `SAFE` (exit 0). The same module also runs as a **RiskCheck** on
@@ -102,24 +103,33 @@ Exit codes:
 `NOT_IMPLEMENTED` never silently passes by default — green CI requires real
 results. See [docs/status-semantics.md](docs/status-semantics.md).
 
+For CI gates that require a minimum implemented-attack ratio:
+
+```bash
+fhe-replay run --lib openfhe --params examples/bfv-128.json \
+    --attacks cheon-2024-127 --min-coverage 1.0
+```
+
 ## Attack modules
 
 | ID                    | Source                                             | Intent             | Status     |
 |-----------------------|----------------------------------------------------|--------------------|------------|
-| `cheon-2024-127`      | Cheon, Hong, Kim — IACR ePrint 2024/127            | Replay + RiskCheck | implemented (Replay against toy-lwe; RiskCheck against openfhe/seal/lattigo/tfhe-rs) |
-| `eprint-2025-867`     | Side-Channel Analysis in HE — IACR ePrint 2025/867 | RiskCheck          | partial (fingerprint short-circuit) |
+| `cheon-2024-127`      | Cheon, Hong, Kim — IACR ePrint 2024/127            | Replay + RiskCheck | implemented (Replay against toy-lwe and OpenFHE BFV/BGV; RiskCheck elsewhere) |
+| `eprint-2025-867`     | Side-Channel Analysis in HE — IACR ePrint 2025/867 | RiskCheck          | partial (SEAL/TenSEAL fingerprint verdicts) |
 | `reveal-2023-1128`    | Aydin, Karabulut et al. — IACR ePrint 2023/1128    | ArtifactCheck      | scaffold   |
 | `guo-qian-usenix24`   | Guo et al. — USENIX Security 2024                  | RiskCheck          | scaffold   |
 | `glitchfhe-usenix25`  | Mankali et al. — USENIX Security 2025              | ArtifactCheck      | scaffold   |
 
-### `cheon-2024-127` — IND-CPA-D Replay (live oracle, toy-lwe)
+### `cheon-2024-127` — IND-CPA-D Replay (live oracle)
 
-Generates keys, encrypts `0`, then runs a binary search on the decryption
-oracle to recover the encryption-noise boundary. Repeats over `N` trials
-and inspects the variance of the recovered boundary:
+Generates keys, encrypts `0`, perturbs the ciphertext polynomial toward the
+rounding boundary, then runs a binary search on the decryption oracle to
+recover the encryption-noise boundary. Repeats over `N` trials and inspects
+the variance of the recovered boundary:
 
 ```text
-trials := 8 bisection runs of 20 rounds each
+trials := 8 bisection runs
+rounds := 20 for toy-lwe; max(20, bit_length(delta)) for OpenFHE
 delta  := q / t  (encoding scale)
 threshold := max(1, 0.05 * delta)
 deterministic := std(boundaries) < threshold
@@ -132,7 +142,16 @@ Try it:
 ```bash
 fhe-replay run --lib toy-lwe --params examples/toy-lwe-vulnerable.json --attacks cheon-2024-127
 fhe-replay run --lib toy-lwe --params examples/toy-lwe-mitigated.json  --attacks cheon-2024-127
+fhe-replay run --lib openfhe --params examples/bfv-128-vulnerable.json --attacks cheon-2024-127
 ```
+
+For OpenFHE BFV/BGV, `openfhe-python` does not expose mutable DCRTPoly
+coefficient APIs. The adapter therefore mutates the serialized OpenFHE JSON
+ciphertext directly: it adds a constant polynomial to ciphertext component
+`c0` across all DCRT towers, deserializes the ciphertext, and queries the
+native decrypt oracle. Replay evidence records
+`test=polynomial_domain_bisection`, `serialization_backend=openfhe-json`, the
+plaintext modulus, and DCRT tower metadata.
 
 ### `cheon-2024-127` — IND-CPA-D RiskCheck (static, all libs)
 
@@ -156,9 +175,13 @@ else:                        VULNERABLE
 Try it:
 
 ```bash
-fhe-replay run --lib openfhe --params examples/bfv-128-vulnerable.json --attacks cheon-2024-127
-fhe-replay run --lib openfhe --params examples/bfv-128-mitigated.json  --attacks cheon-2024-127
+fhe-replay run --lib seal --params examples/bfv-128-vulnerable.json --attacks cheon-2024-127
+fhe-replay run --lib seal --params examples/bfv-128-mitigated.json  --attacks cheon-2024-127
 ```
+
+When a live adapter is available, Replay supersedes this static declaration
+check. For example, OpenFHE BFV/BGV only reports `SAFE` if the native decrypt
+oracle is actually randomized enough for boundary recovery not to converge.
 
 Each module cites its source and (where applicable) the reference PoC. Replay
 implementations are written from public descriptions and ship under Apache-2.0;
@@ -169,7 +192,7 @@ no upstream PoC source is redistributed.
 | Adapter    | Native dependency                                          | Live oracle? |
 |------------|------------------------------------------------------------|:-:|
 | `toy-lwe`  | none — pure Python, in-tree (CI validation only, not secure)| ✅ Replay |
-| `openfhe`  | `openfhe-python` (PyPI wheel = Linux x86_64 only; build from source on macOS/Windows) | ✅ Replay (decryption-oracle determinism); polynomial-domain bisection pending DCRTPoly bindings |
+| `openfhe`  | `openfhe-python` (PyPI wheel = Linux x86_64 only; build from source on macOS/Windows) | ✅ Replay (BFV/BGV polynomial-domain bisection via serialized DCRT mutation) |
 | `seal`     | `tenseal` (microsoft/SEAL backend)                          | ❌ scaffold |
 | `lattigo`  | `fhe-replay-lattigo-helper` (Go binary, PATH)               | ❌ scaffold |
 | `tfhe-rs`  | `fhe-replay-tfhe-rs-helper` (Rust binary, PATH)             | ❌ scaffold |
@@ -182,7 +205,7 @@ no upstream PoC source is redistributed.
     library: openfhe
     params: configs/bfv-128.json
     attacks: all
-    fail-on-vulnerable: true
+    min-coverage: "1.0"
 ```
 
 ## Python API
@@ -232,4 +255,5 @@ python -m twine check dist/*
 - [SECURITY.md](SECURITY.md) — vulnerability reporting policy
 - [CONTRIBUTING.md](CONTRIBUTING.md) — module checklist and module-intent levels
 - [docs/status-semantics.md](docs/status-semantics.md) — per-attack status, intent levels, exit codes
+- [docs/pr-gates.md](docs/pr-gates.md) — using replay reports as PR gates
 - [CHANGELOG.md](CHANGELOG.md)

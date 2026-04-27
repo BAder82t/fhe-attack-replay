@@ -106,7 +106,7 @@ def test_risk_check_path_still_works_for_non_replay_adapters():
 
 def test_replay_against_openfhe_when_available():
     # When openfhe-python is importable (built locally), this test runs the
-    # decryption-oracle-determinism replay against real OpenFHE BFV.
+    # polynomial-domain bisection replay against real OpenFHE BFV.
     # OpenFHE BFV decrypt is deterministic — Cheon 2024/127 applies — so
     # the verdict is VULNERABLE.
     pytest = __import__("pytest")
@@ -116,13 +116,21 @@ def test_replay_against_openfhe_when_available():
         pytest.skip("openfhe-python not importable in this environment")
     report = run(
         library="openfhe",
-        params={"scheme": "BFV", "plaintext_modulus": 65537, "multiplicative_depth": 2},
+        params={
+            "scheme": "BFV",
+            "plaintext_modulus": 65537,
+            "multiplicative_depth": 1,
+            "replay_trials": 2,
+            "bisect_rounds": 16,
+        },
         attacks=["cheon-2024-127"],
     )
     r = report.results[0]
     assert r.evidence["mode"] == "replay"
     assert r.evidence["intent_actual"] == "replay"
-    assert r.evidence["test"] == "decryption_oracle_determinism"
+    assert r.evidence["test"] == "polynomial_domain_bisection"
     assert r.evidence["library_class"] == "production"
+    assert r.evidence["serialization_backend"] == "openfhe-json"
+    assert r.evidence["polynomial_domain"] == "DCRT evaluation form"
     assert r.evidence["deterministic_oracle"] is True
     assert r.status is AttackStatus.VULNERABLE

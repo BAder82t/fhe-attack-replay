@@ -9,7 +9,11 @@ from fhe_attack_replay.report import to_json, to_svg_badge, write_json, write_sv
 
 
 def _example_report():
-    return run(library="openfhe", params={"scheme": "BFV"}, attacks=None)
+    return run(
+        library="openfhe",
+        params={"scheme": "BFV", "replay_trials": 2, "bisect_rounds": 16},
+        attacks=None,
+    )
 
 
 def test_to_json_round_trips_with_coverage_block():

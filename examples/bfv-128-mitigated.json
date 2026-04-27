@@ -1,5 +1,5 @@
 {
-  "_comment": "BFV at 128-bit security with IND-CPA-D adversary and noise-flooding decrypt enabled. Cheon 2024/127 should report SAFE.",
+  "_comment": "BFV at 128-bit security with IND-CPA-D adversary and a declared noise-flooding mitigation. Static RiskCheck should report SAFE; live Replay only reports SAFE if the adapter actually randomizes decrypt.",
   "scheme": "BFV",
   "security_level": 128,
   "ring_dimension": 8192,
