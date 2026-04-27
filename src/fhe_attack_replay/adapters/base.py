@@ -10,10 +10,18 @@ from typing import Any
 
 @dataclass(frozen=True)
 class AdapterCapability:
-    """Static metadata describing what schemes/modes an adapter supports."""
+    """Static metadata describing what schemes/modes an adapter supports.
+
+    `live_oracle` is True when the adapter can drive end-to-end encrypt/
+    perturb/decrypt against a real (or in-tree) cryptosystem. Attacks that
+    run a live Replay (e.g. cheon-2024-127) gate on this flag; adapters that
+    are still scaffolds (Lattigo, tfhe-rs) leave it False so attacks fall
+    back to the RiskCheck path automatically.
+    """
 
     schemes: tuple[str, ...]
     requires_native: bool = True
+    live_oracle: bool = False
     notes: str = ""
 
 

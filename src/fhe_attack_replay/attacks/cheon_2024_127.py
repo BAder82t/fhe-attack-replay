@@ -22,9 +22,13 @@ _ORACLE_ADVERSARY_MODELS = frozenset(
 )
 
 # Mitigations recognized as effective against the Cheon-Hong-Kim attack.
+# All entries are stored in canonical hyphenated form (no underscores) — the
+# `_normalize` helper coerces user input into the same shape, so any of
+# `openfhe-NOISE_FLOODING_DECRYPT`, `openfhe-noise_flooding_decrypt`, or
+# `openfhe-noise-flooding-decrypt` resolve to the same key.
 _RECOGNIZED_MITIGATIONS = frozenset(
     {
-        "openfhe-noise_flooding_decrypt",
+        "openfhe-noise-flooding-decrypt",
         "eprint-2024-424",
         "modulus-switching-2025-1627",
         "eprint-2025-1627",
@@ -34,9 +38,11 @@ _RECOGNIZED_MITIGATIONS = frozenset(
     }
 )
 
-# Adapters that expose live encrypt/decrypt and can therefore drive the
-# end-to-end Replay path. Other adapters fall back to the static RiskCheck.
-_REPLAY_CAPABLE_ADAPTERS = frozenset({"toy-lwe", "openfhe"})
+# Adapter names whose bisection wiring this module knows how to drive
+# directly. The set of *capable* adapters is computed dynamically (see
+# AdapterCapability.live_oracle); this constant only marks which adapters
+# the bisect dispatcher in this file can route to today.
+_LIVE_BISECT_DISPATCH = frozenset({"toy-lwe", "openfhe"})
 
 # Default Replay configuration. The bisection rounds and trial count
 # determine the statistical strength of the discriminator.
@@ -48,9 +54,25 @@ _REPLAY_VARIANCE_MIN_FRAC_DELTA = 0.05
 
 
 def _normalize(value: Any) -> str:
+    """Lowercase + collapse `_` and whitespace into `-`.
+
+    Lets `IND_CPA_D`, `ind cpa d`, and `ind-cpa-d` all map to the same key
+    so users do not need to memorise a single canonical spelling.
+    """
     if value is None:
         return ""
-    return str(value).strip().lower()
+    text = str(value).strip().lower()
+    out: list[str] = []
+    prev_dash = False
+    for ch in text:
+        if ch in {"_", " ", "\t"}:
+            if not prev_dash:
+                out.append("-")
+                prev_dash = True
+        else:
+            out.append(ch)
+            prev_dash = ch == "-"
+    return "".join(out)
 
 
 class Cheon2024_127(Attack):
@@ -104,23 +126,19 @@ class Cheon2024_127(Attack):
     )
 
     def run(self, adapter: LibraryAdapter, ctx: AdapterContext) -> AttackResult:
-        if adapter.name in _REPLAY_CAPABLE_ADAPTERS and adapter.is_available():
+        live_capable = (
+            adapter.capability.live_oracle
+            and adapter.supports(ctx.scheme)
+            and adapter.name in _LIVE_BISECT_DISPATCH
+            and adapter.is_available()
+        )
+        if live_capable:
             try:
                 return self._run_replay(adapter, ctx)
             except NotImplementedError:
                 # Adapter advertised the name but cannot actually run primitives
                 # (e.g. openfhe-python missing the C++ extension). Fall back.
                 pass
-            except Exception as exc:  # pragma: no cover  - defensive
-                return AttackResult(
-                    attack=self.id,
-                    library=adapter.name,
-                    scheme=ctx.scheme,
-                    status=AttackStatus.ERROR,
-                    duration_seconds=0.0,
-                    evidence={"replay_failure": repr(exc)},
-                    message=f"Replay path errored, did not fall back: {exc!r}",
-                )
         return self._run_risk_check(adapter, ctx)
 
     # --------------------------------------------------------------- replay --
@@ -145,7 +163,8 @@ class Cheon2024_127(Attack):
         boundaries_arr = np.asarray(boundaries, dtype=np.float64)
         mean_b = float(boundaries_arr.mean())
         std_b = float(boundaries_arr.std(ddof=0))
-        threshold = max(1.0, _REPLAY_VARIANCE_MIN_FRAC_DELTA * float(delta))
+        variance_frac = self._variance_frac_for(ctx)
+        threshold = max(1.0, variance_frac * float(delta))
         deterministic = std_b < threshold
 
         evidence: dict[str, Any] = {
@@ -157,6 +176,7 @@ class Cheon2024_127(Attack):
             "boundary_mean": mean_b,
             "boundary_std": std_b,
             "variance_threshold": threshold,
+            "variance_frac_delta": variance_frac,
             "deterministic_oracle": deterministic,
             "boundaries_sample": [int(b) for b in boundaries],
             "citation": self.citation.url if self.citation else "",
@@ -278,8 +298,15 @@ class Cheon2024_127(Attack):
                 break
             high *= 2
         else:
-            raise NotImplementedError(
-                "OpenFHE polynomial perturbation did not cross the decrypt boundary."
+            # Genuine runtime divergence (perturbation never crossed the
+            # rounding boundary within 8 doublings of delta). Raise
+            # RuntimeError so the harness reports ERROR with traceback rather
+            # than NOT_IMPLEMENTED, which would be misleading.
+            raise RuntimeError(
+                "OpenFHE polynomial perturbation did not cross the decrypt "
+                f"boundary within 8 doublings of delta={int(delta)}; the "
+                "configured ciphertext modulus or noise level may be outside "
+                "the bisection module's supported range."
             )
 
         for _ in range(rounds):
@@ -313,6 +340,25 @@ class Cheon2024_127(Attack):
         if configured is not None:
             return max(1, int(configured))
         return max(_REPLAY_BISECT_ROUNDS, int(delta).bit_length())
+
+    def _variance_frac_for(self, ctx: AdapterContext) -> float:
+        """Return the SAFE-verdict variance threshold as a fraction of delta.
+
+        Defaults to 0.05 (the value used to validate the replay against
+        toy-lwe). Tunable per-target via ``params["safe_variance_frac_delta"]``;
+        higher values bias toward false-VULNERABLE, lower values toward
+        false-SAFE. See docs/status-semantics.md for the tradeoff.
+        """
+        configured = ctx.params.get("safe_variance_frac_delta")
+        if configured is None:
+            return _REPLAY_VARIANCE_MIN_FRAC_DELTA
+        value = float(configured)
+        if value <= 0:
+            raise ValueError(
+                "safe_variance_frac_delta must be > 0; got "
+                f"{configured!r}."
+            )
+        return value
 
     # ------------------------------------------------------------ risk check -
     def _run_risk_check(

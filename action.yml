@@ -40,6 +40,10 @@ inputs:
     description: "Treat all-SKIPPED runs as success. Off by default."
     required: false
     default: "false"
+  dev-install:
+    description: "Install from the checked-out repo instead of PyPI. Set 'true' when testing the action against an unreleased branch."
+    required: false
+    default: "false"
 
 outputs:
   report:
@@ -67,7 +71,11 @@ runs:
       shell: bash
       run: |
         python -m pip install --upgrade pip
-        python -m pip install fhe-attack-replay
+        if [ "${{ inputs.dev-install }}" = "true" ]; then
+          python -m pip install "${{ github.action_path }}"
+        else
+          python -m pip install fhe-attack-replay
+        fi
 
     - name: Replay attacks
       id: run

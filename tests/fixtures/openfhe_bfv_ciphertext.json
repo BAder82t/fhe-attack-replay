@@ -1,0 +1,49 @@
+{
+  "_comment": "Minimal synthetic OpenFHE BFV ciphertext serialization. Captures the JSON shape that OpenFHEAdapter._component_towers / _component_moduli / perturb_ciphertext_constant traverse. Pinning this shape lets us detect cereal-archive layout changes in a future openfhe-python release without needing the native library installed.",
+  "value0": {
+    "ptr_wrapper": {
+      "data": {
+        "v": [
+          {
+            "v": [
+              {
+                "v": {
+                  "ptr_wrapper": {
+                    "data": {
+                      "v": [11, 22, 33, 44],
+                      "m": {"v": "1099511627791"}
+                    }
+                  }
+                }
+              },
+              {
+                "v": {
+                  "ptr_wrapper": {
+                    "data": {
+                      "v": [101, 202, 303, 404],
+                      "m": {"v": "2199023255579"}
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "v": [
+              {
+                "v": {
+                  "ptr_wrapper": {
+                    "data": {
+                      "v": [55, 66, 77, 88],
+                      "m": {"v": "1099511627791"}
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

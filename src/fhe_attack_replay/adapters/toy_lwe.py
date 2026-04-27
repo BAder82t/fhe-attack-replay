@@ -35,8 +35,9 @@ class ToyLWEAdapter(LibraryAdapter):
 
     name = "toy-lwe"
     capability = AdapterCapability(
-        schemes=("LWE", "BFV"),
+        schemes=("LWE",),
         requires_native=False,
+        live_oracle=True,
         notes=(
             "In-tree pure-Python LWE for CI validation only. Not "
             "cryptographically secure; do not use against real keys."

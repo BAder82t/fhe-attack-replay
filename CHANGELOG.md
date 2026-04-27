@@ -6,6 +6,59 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `Coverage.implemented` no longer counts `ERROR` results. Only `SAFE` and
+  `VULNERABLE` produce real verdicts, so `--min-coverage 1.0` no longer
+  passes a run where every selected attack threw.
+- `OpenFHEAdapter._setup_bfv/_bgv/_ckks` now wires
+  `params["noise_flooding"]` into OpenFHE's native
+  `EXEC_NOISE_FLOODING` / `NOISE_FLOODING_DECRYPT` execution mode when the
+  linked openfhe-python build exposes those APIs. Previously the
+  `openfhe-NOISE_FLOODING_DECRYPT` example would silently behave as
+  unmitigated, producing a misleading live `VULNERABLE` verdict.
+- OpenFHE polynomial-domain bisection now raises `RuntimeError` (surfaced
+  as `ERROR` with traceback) when the perturbation cannot cross the
+  decryption boundary, instead of `NOT_IMPLEMENTED` which falsely implied a
+  scaffold.
+- `OpenFHEAdapter._exact_int` guards against silent precision loss when
+  cereal emits DCRT moduli or coefficients as JSON floats >2^53.
+- `cheon-2024-127` lookups for `adversary_model` and `noise_flooding` now
+  treat `_`, `-`, and whitespace separators interchangeably; canonical
+  recognized labels are stored hyphenated (`openfhe-noise-flooding-decrypt`).
+- `--attacks ""` (or whitespace / commas only) now returns
+  `EXIT_USAGE` instead of silently running every registered attack.
+- CLI subcommand is now required; `fhe-replay` without a verb prints help
+  and exits cleanly. Removed the duplicate `_add_run_args(parser)`
+  registration that allowed implicit run-style invocations.
+- Toy-LWE adapter now advertises `("LWE",)` only — previously it also
+  claimed `BFV` to satisfy `applies_to_schemes`, which let users believe
+  they were testing real BFV. The cheon module now gates the live replay
+  on `adapter.supports(scheme)` and falls back to RiskCheck when the
+  scheme is unsupported by the adapter.
+
+### Added
+- `AdapterCapability.live_oracle` flag — adapters that can drive
+  end-to-end encrypt/perturb/decrypt set this to `True`. Replay-mode
+  attacks gate on this flag and fall back to RiskCheck for the rest.
+- `examples/bfv-128-mitigated.json` now produces a live `SAFE` verdict
+  against OpenFHE BFV when openfhe-python supports the noise-flooding
+  execution mode, matching the README's documented behavior.
+- `cheon-2024-127` accepts `params["safe_variance_frac_delta"]` to tune
+  the SAFE-verdict threshold. Default `0.05`; lower values bias toward
+  `SAFE`, higher toward `VULNERABLE`. Documented in
+  `docs/status-semantics.md`.
+- Action input `dev-install: true` installs from the checked-out repo
+  instead of PyPI, for testing the action against an unreleased branch.
+- `tests/fixtures/openfhe_bfv_ciphertext.json` pins the OpenFHE-JSON
+  ciphertext layout the adapter traverses; failures here surface
+  upstream archive reshapes in openfhe-python upgrades.
+
+### Changed
+- `runner._setup_or_synthetic` now also catches `RuntimeError` (in
+  addition to `NotImplementedError`) so adapters that fail because a
+  helper binary is missing on PATH still expose a synthetic context to
+  RiskCheck-mode attacks.
+
 ### Added
 - **`cheon-2024-127` now runs as a real live-oracle Replay against
   OpenFHE BFV/BGV via `openfhe-python`.** The adapter now mutates serialized

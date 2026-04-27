@@ -32,8 +32,10 @@ class Coverage:
 
     @property
     def implemented(self) -> int:
-        # Anything that produced a real verdict counts as implemented coverage.
-        return self.safe + self.vulnerable + self.errors
+        # Only SAFE/VULNERABLE produced a real verdict. ERROR is the absence
+        # of a verdict, not a verdict — counting it would let `--min-coverage 1.0`
+        # pass on a run where every attack threw.
+        return self.safe + self.vulnerable
 
     @property
     def ratio(self) -> float:
@@ -143,11 +145,18 @@ def _setup_or_synthetic(
     or a parameter snapshot run end-to-end even when no native library is
     installed. Attacks that need real ciphertext/key plumbing will report
     ERROR or NOT_IMPLEMENTED — by design.
+
+    Catches both ``NotImplementedError`` (scaffold setup paths) and
+    ``RuntimeError`` (e.g. helper binary missing on PATH for the Lattigo /
+    tfhe-rs adapters) so RiskCheck attacks still see a usable params
+    snapshot. Other exception classes (``ValueError``, etc.) are left to
+    propagate — they signal a real configuration error the caller should
+    see, not a missing native dependency.
     """
     if adapter.is_available():
         try:
             return adapter.setup(scheme, params)
-        except NotImplementedError:
+        except (NotImplementedError, RuntimeError):
             return AdapterContext(library=adapter.name, scheme=scheme, params=params, handles={})
     return AdapterContext(library=adapter.name, scheme=scheme, params=params, handles={})
 

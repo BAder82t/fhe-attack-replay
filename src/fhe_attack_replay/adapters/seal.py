@@ -9,6 +9,14 @@ to build keys, encrypt sample plaintexts, decrypt them, and read parameter
 metadata back out for fingerprinting. ``is_available`` performs a real
 import (not just a metadata check) so adapters silently fall back to a
 synthetic context when ``tenseal`` is missing.
+
+Note on key management: TenSEAL stores the secret key inside the
+``Context`` object — it does not expose a separate keypair the way
+openfhe-python does. ``encrypt`` and ``decrypt`` therefore both read
+through the same context. This adapter is RiskCheck-only by design
+(``capability.live_oracle = False``); attacks that require a live
+decryption oracle wired through the harness skip the SEAL adapter and
+fall back to their static decision rule.
 """
 
 from __future__ import annotations

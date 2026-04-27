@@ -23,6 +23,16 @@ from fhe_attack_replay.adapters.base import (
     LibraryAdapter,
 )
 
+# Mitigation labels that this adapter knows how to wire into OpenFHE's native
+# NOISE_FLOODING_DECRYPT execution mode. Stored in canonical hyphenated form;
+# `_normalize_flooding_label` coerces user input into the same shape so casing
+# and `_` vs `-` separators are interchangeable. Other recognized mitigations
+# (eprint-2024-424, eprint-2025-1627, ...) are not native OpenFHE features
+# and remain RiskCheck-only.
+_OPENFHE_NATIVE_FLOODING_LABELS = frozenset(
+    {"openfhe-noise-flooding-decrypt", "noise-flooding"}
+)
+
 
 def _try_import_openfhe():
     """Import openfhe-python, returning the module or None on any failure.
@@ -37,11 +47,64 @@ def _try_import_openfhe():
         return None
 
 
+def _normalize_flooding_label(value: Any) -> str:
+    """Lowercase and collapse `_`/whitespace runs to single `-` separators."""
+    if value is None:
+        return ""
+    text = str(value).strip().lower()
+    out: list[str] = []
+    prev_dash = False
+    for ch in text:
+        if ch in {"_", " ", "\t"}:
+            if not prev_dash:
+                out.append("-")
+                prev_dash = True
+        else:
+            out.append(ch)
+            prev_dash = ch == "-"
+    return "".join(out)
+
+
+def _apply_native_noise_flooding(of, params_obj, params: dict[str, Any]) -> bool:
+    """Enable OpenFHE NOISE_FLOODING_DECRYPT on a CCParams object when requested.
+
+    Returns True iff the native mitigation was actually wired into the
+    crypto-context parameters. Raises RuntimeError when the params dict
+    declares a native mitigation but the running openfhe-python build lacks
+    the API surface — surfacing a clear error to the caller is preferable to
+    silently building a non-flooded context that would then look VULNERABLE.
+    """
+    label = _normalize_flooding_label(params.get("noise_flooding"))
+    if label not in _OPENFHE_NATIVE_FLOODING_LABELS:
+        return False
+    set_exec = getattr(params_obj, "SetExecutionMode", None)
+    set_decrypt = getattr(params_obj, "SetDecryptionNoiseMode", None)
+    exec_flooding = getattr(of, "EXEC_NOISE_FLOODING", None)
+    decrypt_flooding = getattr(of, "NOISE_FLOODING_DECRYPT", None)
+    api_complete = (
+        set_exec
+        and set_decrypt
+        and exec_flooding is not None
+        and decrypt_flooding is not None
+    )
+    if not api_complete:
+        raise RuntimeError(
+            "params.noise_flooding requested OpenFHE NOISE_FLOODING_DECRYPT "
+            "but the linked openfhe-python build does not expose "
+            "SetExecutionMode / SetDecryptionNoiseMode. Upgrade openfhe-python "
+            "to a build that exposes the EXEC_NOISE_FLOODING execution mode."
+        )
+    set_exec(exec_flooding)
+    set_decrypt(decrypt_flooding)
+    return True
+
+
 class OpenFHEAdapter(LibraryAdapter):
     name = "openfhe"
     capability = AdapterCapability(
         schemes=("BFV", "BGV", "CKKS"),
         requires_native=True,
+        live_oracle=True,
         notes=(
             "Requires openfhe-python with a working C++ backend. The PyPI "
             "wheel only ships Linux x86_64; on other platforms build from "
@@ -63,11 +126,11 @@ class OpenFHEAdapter(LibraryAdapter):
             )
         scheme_u = scheme.upper()
         if scheme_u == "BFV":
-            cc, keypair = self._setup_bfv(of, params)
+            cc, keypair, flooding = self._setup_bfv(of, params)
         elif scheme_u == "BGV":
-            cc, keypair = self._setup_bgv(of, params)
+            cc, keypair, flooding = self._setup_bgv(of, params)
         elif scheme_u == "CKKS":
-            cc, keypair = self._setup_ckks(of, params)
+            cc, keypair, flooding = self._setup_ckks(of, params)
         else:
             raise ValueError(
                 f"OpenFHEAdapter does not support scheme {scheme!r}; "
@@ -77,7 +140,13 @@ class OpenFHEAdapter(LibraryAdapter):
             library=self.name,
             scheme=scheme_u,
             params=params,
-            handles={"openfhe": of, "cc": cc, "keys": keypair, "scheme": scheme_u},
+            handles={
+                "openfhe": of,
+                "cc": cc,
+                "keys": keypair,
+                "scheme": scheme_u,
+                "native_noise_flooding": flooding,
+            },
         )
 
     def _setup_bfv(self, of, params: dict[str, Any]):
@@ -86,10 +155,11 @@ class OpenFHEAdapter(LibraryAdapter):
         p.SetMultiplicativeDepth(int(params.get("multiplicative_depth", 2)))
         if "ring_dimension" in params:
             p.SetRingDim(int(params["ring_dimension"]))
+        flooding = _apply_native_noise_flooding(of, p, params)
         cc = of.GenCryptoContext(p)
         cc.Enable(of.PKESchemeFeature.PKE)
         cc.Enable(of.PKESchemeFeature.LEVELEDSHE)
-        return cc, cc.KeyGen()
+        return cc, cc.KeyGen(), flooding
 
     def _setup_bgv(self, of, params: dict[str, Any]):
         p = of.CCParamsBGVRNS()
@@ -97,10 +167,11 @@ class OpenFHEAdapter(LibraryAdapter):
         p.SetMultiplicativeDepth(int(params.get("multiplicative_depth", 2)))
         if "ring_dimension" in params:
             p.SetRingDim(int(params["ring_dimension"]))
+        flooding = _apply_native_noise_flooding(of, p, params)
         cc = of.GenCryptoContext(p)
         cc.Enable(of.PKESchemeFeature.PKE)
         cc.Enable(of.PKESchemeFeature.LEVELEDSHE)
-        return cc, cc.KeyGen()
+        return cc, cc.KeyGen(), flooding
 
     def _setup_ckks(self, of, params: dict[str, Any]):
         p = of.CCParamsCKKSRNS()
@@ -109,10 +180,11 @@ class OpenFHEAdapter(LibraryAdapter):
         p.SetBatchSize(int(params.get("batch_size", 8)))
         if "ring_dimension" in params:
             p.SetRingDim(int(params["ring_dimension"]))
+        flooding = _apply_native_noise_flooding(of, p, params)
         cc = of.GenCryptoContext(p)
         cc.Enable(of.PKESchemeFeature.PKE)
         cc.Enable(of.PKESchemeFeature.LEVELEDSHE)
-        return cc, cc.KeyGen()
+        return cc, cc.KeyGen(), flooding
 
     def encrypt(self, ctx: AdapterContext, plaintext: Any) -> Any:
         cc = ctx.handles["cc"]
@@ -182,10 +254,10 @@ class OpenFHEAdapter(LibraryAdapter):
         for tower in towers:
             data = tower["v"]["ptr_wrapper"]["data"]
             coeffs = data["v"]
-            modulus = int(data["m"]["v"])
+            modulus = self._exact_int(data["m"]["v"], "DCRT tower modulus")
             residue = int(offset) % modulus
             for idx, coeff in enumerate(coeffs):
-                coeffs[idx] = (int(coeff) + residue) % modulus
+                coeffs[idx] = (self._exact_int(coeff, "DCRT coefficient") + residue) % modulus
         return self._deserialize_ciphertext(ctx, payload)
 
     def polynomial_replay_metadata(
@@ -201,6 +273,7 @@ class OpenFHEAdapter(LibraryAdapter):
             "ciphertext_modulus_bits": modulus.bit_length(),
             "dcrt_tower_count": len(moduli),
             "dcrt_moduli_bits": [m.bit_length() for m in moduli],
+            "native_noise_flooding": bool(ctx.handles.get("native_noise_flooding", False)),
         }
 
     def _serialize_ciphertext(
@@ -227,8 +300,34 @@ class OpenFHEAdapter(LibraryAdapter):
         cls, payload: dict[str, Any], *, component: int
     ) -> tuple[int, ...]:
         return tuple(
-            int(tower["v"]["ptr_wrapper"]["data"]["m"]["v"])
+            cls._exact_int(tower["v"]["ptr_wrapper"]["data"]["m"]["v"], "DCRT tower modulus")
             for tower in cls._component_towers(payload, component=component)
+        )
+
+    @staticmethod
+    def _exact_int(raw: Any, label: str) -> int:
+        """Coerce an OpenFHE-JSON integer field without losing precision.
+
+        Cereal-style integers >2^53 emitted as JSON numbers (not strings) lose
+        precision when ``json.loads`` parses them as ``float``. Strings always
+        round-trip safely. This guard fails fast with a clear message rather
+        than silently truncating a DCRT modulus during ciphertext mutation.
+        """
+        if isinstance(raw, str):
+            return int(raw)
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            return raw
+        if isinstance(raw, float):
+            if not raw.is_integer() or abs(raw) >= 2**53:
+                raise RuntimeError(
+                    f"OpenFHE serialization emitted {label} as a JSON float "
+                    f"({raw!r}); this loses precision above 2**53. Pin "
+                    "openfhe-python to a build that emits big integers as JSON "
+                    "strings, or rebuild with a string-encoding cereal archive."
+                )
+            return int(raw)
+        raise RuntimeError(
+            f"Unexpected type {type(raw).__name__} for {label} in OpenFHE JSON payload."
         )
 
     def evaluator_fingerprint(self, ctx: AdapterContext) -> dict[str, Any]:

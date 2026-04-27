@@ -194,8 +194,18 @@ no upstream PoC source is redistributed.
 | `toy-lwe`  | none — pure Python, in-tree (CI validation only, not secure)| ✅ Replay |
 | `openfhe`  | `openfhe-python` (PyPI wheel = Linux x86_64 only; build from source on macOS/Windows) | ✅ Replay (BFV/BGV polynomial-domain bisection via serialized DCRT mutation) |
 | `seal`     | `tenseal` (microsoft/SEAL backend)                          | ❌ scaffold |
-| `lattigo`  | `fhe-replay-lattigo-helper` (Go binary, PATH)               | ❌ scaffold |
-| `tfhe-rs`  | `fhe-replay-tfhe-rs-helper` (Rust binary, PATH)             | ❌ scaffold |
+| `lattigo`  | `fhe-replay-lattigo-helper` (Go binary, PATH; helper crate planned for v0.1) | ❌ scaffold |
+| `tfhe-rs`  | `fhe-replay-tfhe-rs-helper` (Rust binary, PATH; helper crate planned for v0.1) | ❌ scaffold |
+
+> The Lattigo and tfhe-rs helper binaries are not yet shipped in this repo;
+> the `vendor/lattigo-helper/` and `vendor/tfhe-rs-helper/` projects are
+> tracked for v0.1. Until then, those adapters report their attacks as
+> RiskCheck-only or NOT_IMPLEMENTED.
+
+> When building openfhe-python from source for the live OpenFHE replay,
+> pin a release that emits big DCRT moduli as JSON strings during
+> serialization. The adapter's precision guard fails fast on JSON-float
+> moduli >2^53 to avoid silent truncation.
 
 ## GitHub Action
 

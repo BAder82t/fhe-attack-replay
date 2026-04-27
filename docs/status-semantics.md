@@ -60,6 +60,33 @@ The default is intentionally strict: silent green CI for runs that did
 not actually exercise an attack is a footgun, not a feature.
 
 `--min-coverage N` adds a second gate after status handling. For example,
-`--min-coverage 1.0` requires every selected attack to produce an implemented
-verdict (`SAFE`, `VULNERABLE`, or `ERROR`). This is useful when a PR should not
-pass with mostly scaffolded or skipped checks.
+`--min-coverage 1.0` requires every selected attack to produce a real
+implemented verdict (`SAFE` or `VULNERABLE`). `ERROR` is **not** counted as
+implemented coverage — an attack that threw is the absence of a verdict, not
+a verdict, so a run that errors out everywhere cannot satisfy
+`--min-coverage`.
+
+## Replay tuning knobs
+
+The `cheon-2024-127` live replay reads three optional params from the
+target config:
+
+| Param                       | Default | What it controls                                                                 |
+|-----------------------------|---------|-----------------------------------------------------------------------------------|
+| `replay_trials`             | `8`     | Number of independent bisection trials per run.                                   |
+| `bisect_rounds`             | `max(20, bit_length(delta))` | Bisection rounds per trial.                       |
+| `safe_variance_frac_delta`  | `0.05`  | Fraction of the encoding scale `delta`. The bisection-recovered noise boundary must vary by at least `safe_variance_frac_delta * delta` (1σ across trials) for the run to report `SAFE`. |
+
+The `safe_variance_frac_delta` knob trades false-positive against
+false-negative rate:
+
+- **Higher** (e.g. `0.10`) → biases toward `VULNERABLE`. Use when the
+  decryption oracle is supposed to be heavily randomized and you want to
+  catch under-flooded mitigations.
+- **Lower** (e.g. `0.01`) → biases toward `SAFE`. Use when a mitigation
+  emits low-amplitude randomization on top of an already-noisy decrypt path
+  and you want to avoid spurious `VULNERABLE` verdicts.
+
+The default (`0.05`) was tuned against the toy-lwe adapter's
+`noise_flooding_sigma ≈ delta/4` mitigation; production-grade libraries
+with their own decrypt randomization may need a smaller value.

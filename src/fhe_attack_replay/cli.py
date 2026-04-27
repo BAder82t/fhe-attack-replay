@@ -34,9 +34,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
-    sub = parser.add_subparsers(dest="command", required=False)
+    sub = parser.add_subparsers(dest="command", required=True)
 
-    run_p = sub.add_parser("run", help="Run attack replays (default subcommand).")
+    run_p = sub.add_parser("run", help="Run attack replays.")
     _add_run_args(run_p)
 
     list_p = sub.add_parser("list", help="List known libraries and attacks.")
@@ -52,7 +52,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Show adapter availability and native dependency notes.",
     )
 
-    _add_run_args(parser)
     return parser
 
 
@@ -121,11 +120,21 @@ def _load_params(path: Path | None) -> dict[str, Any]:
 
 
 def _resolve_attacks(spec: str) -> list[str] | None:
-    if spec.strip().lower() == "all":
+    """Parse the --attacks argument into a list of ids or None.
+
+    None means "run every registered attack". An empty/whitespace-only spec
+    is a usage error rather than a silent "all" — that mistake in CI
+    scripting would defeat the purpose of an explicit attack list.
+    """
+    stripped = spec.strip()
+    if stripped.lower() == "all":
         return None
-    ids = [s.strip() for s in spec.split(",") if s.strip()]
+    ids = [s.strip() for s in stripped.split(",") if s.strip()]
     if not ids:
-        return None
+        raise ValueError(
+            "--attacks is empty. Pass 'all' to run every registered attack, "
+            "or a comma-separated list of ids (see `fhe-replay list attacks`)."
+        )
     return ids
 
 
@@ -185,9 +194,21 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if not args.lib:
         print("error: --lib is required for `run`.", file=sys.stderr)
         return EXIT_USAGE
-    params = _load_params(args.params)
-    attacks = _resolve_attacks(args.attacks)
-    report = run(library=args.lib, params=params, attacks=attacks, scheme=args.scheme)
+    try:
+        params = _load_params(args.params)
+        attacks = _resolve_attacks(args.attacks)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        report = run(library=args.lib, params=params, attacks=attacks, scheme=args.scheme)
+    except KeyError as exc:
+        # Unknown adapter or attack id — registry raises KeyError.
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    except Exception as exc:  # pragma: no cover - defensive top-level guard
+        print(f"error: replay setup failed: {exc!r}", file=sys.stderr)
+        return EXIT_ERROR
 
     if args.output_json:
         write_json(report, args.output_json)
@@ -241,5 +262,5 @@ def main(argv: list[str] | None = None) -> int:
     return _cmd_run(args)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - script entry point
     raise SystemExit(main())
