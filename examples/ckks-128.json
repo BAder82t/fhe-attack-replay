@@ -1,0 +1,10 @@
+{
+  "_comment": "Example CKKS parameters at 128-bit security with noise flooding.",
+  "scheme": "CKKS",
+  "security_level": 128,
+  "ring_dimension": 16384,
+  "scale_bits": 40,
+  "coeff_modulus_bits": [60, 40, 40, 40, 40, 60],
+  "noise_flooding": "openfhe-NOISE_FLOODING_DECRYPT",
+  "constant_time_decrypt": false
+}

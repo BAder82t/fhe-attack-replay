@@ -1,0 +1,95 @@
+name: "FHE Attack Replay"
+description: "Replay published FHE attacks against a (library, params) target and surface a status badge."
+author: "Vaultbytes"
+branding:
+  icon: "shield"
+  color: "purple"
+
+inputs:
+  library:
+    description: "Target FHE library: openfhe | seal | lattigo | tfhe-rs."
+    required: true
+  params:
+    description: "Path to params JSON file."
+    required: true
+  attacks:
+    description: "Comma-separated attack ids, or 'all'."
+    required: false
+    default: "all"
+  scheme:
+    description: "Override scheme (default: read from params['scheme'])."
+    required: false
+    default: ""
+  output-json:
+    description: "Path to write the JSON report."
+    required: false
+    default: "fhe-replay-report.json"
+  badge:
+    description: "Path to write the SVG status badge."
+    required: false
+    default: "fhe-replay-badge.svg"
+  fail-on-vulnerable:
+    description: "Fail the job if any attack reports VULNERABLE."
+    required: false
+    default: "true"
+
+outputs:
+  report:
+    description: "Path to the JSON report."
+    value: ${{ steps.run.outputs.report }}
+  badge:
+    description: "Path to the SVG badge."
+    value: ${{ steps.run.outputs.badge }}
+  status:
+    description: "Overall status: safe | vulnerable | error | not_implemented."
+    value: ${{ steps.run.outputs.status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install fhe-attack-replay
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install fhe-attack-replay
+
+    - name: Replay attacks
+      id: run
+      shell: bash
+      env:
+        FAIL_ON_VULNERABLE: ${{ inputs.fail-on-vulnerable }}
+      run: |
+        set -e
+        scheme_arg=""
+        if [ -n "${{ inputs.scheme }}" ]; then
+          scheme_arg="--scheme ${{ inputs.scheme }}"
+        fi
+        set +e
+        fhe-replay run \
+          --lib "${{ inputs.library }}" \
+          --params "${{ inputs.params }}" \
+          --attacks "${{ inputs.attacks }}" \
+          --output-json "${{ inputs.output-json }}" \
+          --badge "${{ inputs.badge }}" \
+          --quiet \
+          $scheme_arg
+        rc=$?
+        set -e
+        status=$(python -c "import json,sys; print(json.load(open('${{ inputs.output-json }}'))['overall_status'])")
+        echo "report=${{ inputs.output-json }}" >> "$GITHUB_OUTPUT"
+        echo "badge=${{ inputs.badge }}" >> "$GITHUB_OUTPUT"
+        echo "status=$status" >> "$GITHUB_OUTPUT"
+        if [ "$FAIL_ON_VULNERABLE" = "true" ] && [ "$rc" -eq 2 ]; then
+          echo "::error::fhe-attack-replay reported VULNERABLE." >&2
+          exit 2
+        fi
+        if [ "$rc" -eq 3 ]; then
+          echo "::error::fhe-attack-replay encountered an internal error." >&2
+          exit 3
+        fi
+        exit 0

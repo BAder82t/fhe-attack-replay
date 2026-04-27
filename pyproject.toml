@@ -1,0 +1,75 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fhe-attack-replay"
+version = "0.0.1"
+description = "Unified attack-replay regression harness for FHE libraries (SEAL, OpenFHE, Lattigo, tfhe-rs)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [
+    { name = "Vaultbytes", email = "baderissaei@gmail.com" },
+]
+keywords = ["fhe", "homomorphic-encryption", "security", "regression-testing", "ckks", "bfv", "bgv"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security :: Cryptography",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = []
+
+[project.optional-dependencies]
+openfhe = []
+seal = []
+lattigo = []
+tfhe-rs = []
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+]
+all = [
+    "fhe-attack-replay[openfhe,seal,lattigo,tfhe-rs,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/BAder82t/fhe-attack-replay"
+Issues = "https://github.com/BAder82t/fhe-attack-replay/issues"
+Source = "https://github.com/BAder82t/fhe-attack-replay"
+
+[project.scripts]
+fhe-replay = "fhe_attack_replay.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fhe_attack_replay"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/fhe_attack_replay",
+    "tests",
+    "examples",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

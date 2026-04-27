@@ -1,0 +1,10 @@
+{
+  "_comment": "Example BFV parameters at the 128-bit security level. Used by the smoke test.",
+  "scheme": "BFV",
+  "security_level": 128,
+  "ring_dimension": 8192,
+  "plaintext_modulus": 65537,
+  "coeff_modulus_bits": [60, 40, 40, 60],
+  "noise_flooding": "none",
+  "constant_time_decrypt": false
+}
