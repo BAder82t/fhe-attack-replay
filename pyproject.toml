@@ -26,7 +26,9 @@ classifiers = [
     "Topic :: Security :: Cryptography",
     "Topic :: Software Development :: Testing",
 ]
-dependencies = []
+dependencies = [
+    "numpy>=1.26",
+]
 
 [project.optional-dependencies]
 openfhe = []

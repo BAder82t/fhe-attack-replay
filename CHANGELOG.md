@@ -7,6 +7,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`cheon-2024-127` now runs as a real live-oracle Replay against the
+  in-tree `toy-lwe` adapter.** Bisection-based encryption-noise recovery
+  across 8 trials of 20 rounds each; verdict driven by the std-dev of the
+  recovered boundary against `0.05 * delta`. Unmitigated configs report
+  `VULNERABLE`; configs with `noise_flooding_sigma` ≳ delta/4 report
+  `SAFE`. The same module falls back to RiskCheck when the adapter cannot
+  drive a live oracle.
+- **`toy-lwe` adapter and lab cryptosystem** under
+  `src/fhe_attack_replay/lab/` and `src/fhe_attack_replay/adapters/`.
+  Pure-Python LWE with deterministic seedable keygen / encrypt / decrypt
+  and an optional `noise_flooding_sigma` mirroring OpenFHE's
+  `NOISE_FLOODING_DECRYPT` randomization. Not cryptographically secure;
+  exists so attack modules can be exercised end-to-end in CI.
+- **OpenFHEAdapter wired against `openfhe-python`** for BFV / BGV / CKKS:
+  setup (CCParams\* + KeyGen), encrypt (Make\*PackedPlaintext), decrypt
+  (GetPackedValue / GetCKKSPackedValue). `is_available` performs a real
+  import of the C++ extension — not just a metadata check — so the
+  adapter falls back cleanly when the wheel is platform-incompatible.
+- New examples: `examples/toy-lwe-vulnerable.json` and
+  `examples/toy-lwe-mitigated.json` driving the Replay path end-to-end.
+- `numpy>=1.26` is now a runtime dependency (used by the toy-lwe lab).
 - **First real attack module: `cheon-2024-127` as a RiskCheck.** Static
   analysis of `(scheme, adversary_model, decryption_oracle, noise_flooding)`
   against the Cheon-Hong-Kim 2024/127 IND-CPA-D threat model. Returns

@@ -1,4 +1,4 @@
-# Copyright 2026 Vaultbytes (Bader Issaei)
+# Copyright 2026 Vaultbytes (Bader Alissaei)
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from fhe_attack_replay.adapters import (
     OpenFHEAdapter,
     SEALAdapter,
     TfheRsAdapter,
+    ToyLWEAdapter,
 )
 from fhe_attack_replay.attacks import (
     Attack,
@@ -24,6 +25,7 @@ _ADAPTERS: dict[str, type[LibraryAdapter]] = {
     SEALAdapter.name: SEALAdapter,
     LattigoAdapter.name: LattigoAdapter,
     TfheRsAdapter.name: TfheRsAdapter,
+    ToyLWEAdapter.name: ToyLWEAdapter,
 }
 
 _ATTACKS: dict[str, type[Attack]] = {

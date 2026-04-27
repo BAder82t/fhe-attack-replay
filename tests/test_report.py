@@ -1,4 +1,4 @@
-# Copyright 2026 Vaultbytes (Bader Issaei)
+# Copyright 2026 Vaultbytes (Bader Alissaei)
 # SPDX-License-Identifier: Apache-2.0
 
 import json

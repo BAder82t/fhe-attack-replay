@@ -1,0 +1,10 @@
+{
+  "_comment": "Toy LWE with noise-flooding decryption oracle (sigma ~ delta/4). Cheon-Hong-Kim 2024/127 live-oracle replay should fail to converge across trials and report SAFE.",
+  "scheme": "LWE",
+  "n": 32,
+  "q": 1048576,
+  "t": 16,
+  "sigma": 3.2,
+  "noise_flooding_sigma": 16384.0,
+  "seed": 1
+}

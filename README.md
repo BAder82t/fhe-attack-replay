@@ -1,9 +1,13 @@
 # fhe-attack-replay
 
-> **Alpha.** One module — `cheon-2024-127` — produces real `VULNERABLE` /
-> `SAFE` / `SKIPPED` verdicts as a static **RiskCheck**. The remaining four
-> modules are still citation-bearing scaffolds. A live-oracle **Replay** for
-> Cheon will land alongside the OpenFHE adapter wiring. See
+> **Alpha.** `cheon-2024-127` runs as a real **live-oracle Replay** against
+> the in-tree `toy-lwe` adapter — bisection-based encryption-noise recovery
+> across multiple trials, exit 2 on `VULNERABLE`, exit 0 on `SAFE` after
+> noise flooding. The same module also runs as a **RiskCheck** on adapters
+> without a live oracle (e.g. when the OpenFHE C++ build is missing). The
+> OpenFHE adapter is wired against `openfhe-python` for setup / encrypt /
+> decrypt; a faithful OpenFHE Replay (which needs polynomial-domain
+> ciphertext perturbation) lands in a follow-up. See
 > [DISCLAIMER.md](DISCLAIMER.md) for what `SAFE` does and does not mean.
 
 Framework for a unified attack-replay regression harness for FHE libraries.
@@ -60,18 +64,41 @@ results. See [docs/status-semantics.md](docs/status-semantics.md).
 
 ## Attack modules
 
-| ID                    | Source                                             | Intent           | Status     |
-|-----------------------|----------------------------------------------------|------------------|------------|
-| `cheon-2024-127`      | Cheon, Hong, Kim — IACR ePrint 2024/127            | RiskCheck        | implemented |
-| `eprint-2025-867`     | Side-Channel Analysis in HE — IACR ePrint 2025/867 | RiskCheck        | partial (fingerprint short-circuit) |
-| `reveal-2023-1128`    | Aydin, Karabulut et al. — IACR ePrint 2023/1128    | ArtifactCheck    | scaffold   |
-| `guo-qian-usenix24`   | Guo et al. — USENIX Security 2024                  | RiskCheck        | scaffold   |
-| `glitchfhe-usenix25`  | Mankali et al. — USENIX Security 2025              | ArtifactCheck    | scaffold   |
+| ID                    | Source                                             | Intent             | Status     |
+|-----------------------|----------------------------------------------------|--------------------|------------|
+| `cheon-2024-127`      | Cheon, Hong, Kim — IACR ePrint 2024/127            | Replay + RiskCheck | implemented (Replay against toy-lwe; RiskCheck against openfhe/seal/lattigo/tfhe-rs) |
+| `eprint-2025-867`     | Side-Channel Analysis in HE — IACR ePrint 2025/867 | RiskCheck          | partial (fingerprint short-circuit) |
+| `reveal-2023-1128`    | Aydin, Karabulut et al. — IACR ePrint 2023/1128    | ArtifactCheck      | scaffold   |
+| `guo-qian-usenix24`   | Guo et al. — USENIX Security 2024                  | RiskCheck          | scaffold   |
+| `glitchfhe-usenix25`  | Mankali et al. — USENIX Security 2025              | ArtifactCheck      | scaffold   |
 
-### `cheon-2024-127` — IND-CPA-D RiskCheck
+### `cheon-2024-127` — IND-CPA-D Replay (live oracle, toy-lwe)
 
-Inspects `(scheme, adversary_model, decryption_oracle, noise_flooding)`
-against the Cheon-Hong-Kim 2024/127 threat model:
+Generates keys, encrypts `0`, then runs a binary search on the decryption
+oracle to recover the encryption-noise boundary. Repeats over `N` trials
+and inspects the variance of the recovered boundary:
+
+```text
+trials := 8 bisection runs of 20 rounds each
+delta  := q / t  (encoding scale)
+threshold := max(1, 0.05 * delta)
+deterministic := std(boundaries) < threshold
+if deterministic:  VULNERABLE  (oracle leaks; published key recovery applies)
+else:              SAFE        (oracle randomized; noise-recovery primitive does not converge)
+```
+
+Try it:
+
+```bash
+fhe-replay run --lib toy-lwe --params examples/toy-lwe-vulnerable.json --attacks cheon-2024-127
+fhe-replay run --lib toy-lwe --params examples/toy-lwe-mitigated.json  --attacks cheon-2024-127
+```
+
+### `cheon-2024-127` — IND-CPA-D RiskCheck (static, all libs)
+
+When the adapter cannot drive a live oracle, the same module runs as a
+RiskCheck and inspects `(scheme, adversary_model, decryption_oracle,
+noise_flooding)` against the threat model:
 
 ```text
 oracle_access := decryption_oracle == True
@@ -99,12 +126,13 @@ no upstream PoC source is redistributed.
 
 ## Supported libraries
 
-| Adapter   | Native dependency                              |
-|-----------|------------------------------------------------|
-| `openfhe` | `openfhe-python` bindings                      |
-| `seal`    | `tenseal` (microsoft/SEAL backend)             |
-| `lattigo` | `fhe-replay-lattigo-helper` (Go binary, PATH)  |
-| `tfhe-rs` | `fhe-replay-tfhe-rs-helper` (Rust binary, PATH)|
+| Adapter    | Native dependency                                          | Live oracle? |
+|------------|------------------------------------------------------------|:-:|
+| `toy-lwe`  | none — pure Python, in-tree (CI validation only, not secure)| ✅ |
+| `openfhe`  | `openfhe-python` (PyPI wheel = Linux x86_64 only; build from source on macOS/Windows) | ⚠ encrypt/decrypt wired; perturbation primitive pending |
+| `seal`     | `tenseal` (microsoft/SEAL backend)                          | ❌ scaffold |
+| `lattigo`  | `fhe-replay-lattigo-helper` (Go binary, PATH)               | ❌ scaffold |
+| `tfhe-rs`  | `fhe-replay-tfhe-rs-helper` (Rust binary, PATH)             | ❌ scaffold |
 
 ## GitHub Action
 
