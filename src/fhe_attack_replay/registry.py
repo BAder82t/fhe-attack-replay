@@ -8,6 +8,7 @@ from fhe_attack_replay.adapters import (
     LibraryAdapter,
     OpenFHEAdapter,
     SEALAdapter,
+    SealPythonAdapter,
     TfheRsAdapter,
     ToyLWEAdapter,
 )
@@ -23,6 +24,7 @@ from fhe_attack_replay.attacks import (
 _ADAPTERS: dict[str, type[LibraryAdapter]] = {
     OpenFHEAdapter.name: OpenFHEAdapter,
     SEALAdapter.name: SEALAdapter,
+    SealPythonAdapter.name: SealPythonAdapter,
     LattigoAdapter.name: LattigoAdapter,
     TfheRsAdapter.name: TfheRsAdapter,
     ToyLWEAdapter.name: ToyLWEAdapter,

@@ -29,9 +29,12 @@ _DEFAULT_CORRELATION_THRESHOLD = 0.5
 class RevEAL_2023_1128(Attack):
     """Single-trace side-channel leakage of the SEAL homomorphic encryption library.
 
-    Reference: Aydin, Karabulut et al. — "RevEAL: Single-Trace Side-Channel
-    Leakage of the SEAL Homomorphic Encryption Library." DATE 2022 / IACR
-    ePrint 2023/1128. The attack recovers secret-key Hamming weights via a
+    Reference: Aydin, Karabulut, Potluri, Alkim, Aysu — "RevEAL:
+    Single-Trace Side-Channel Leakage of the SEAL Homomorphic
+    Encryption Library." DATE 2022 / IACR **ePrint 2022/204** (the
+    follow-up "Leaking Secrets in HE with Side-Channel Attacks" is
+    ePrint 2023/1128 and gives this module its slug for catalog
+    stability). The attack recovers secret-key Hamming weights via a
     single power trace of the modular reduction inside SEAL's NTT.
 
     ArtifactCheck contract:
@@ -78,11 +81,11 @@ class RevEAL_2023_1128(Attack):
             "RevEAL: Single-Trace Side-Channel Leakage of the SEAL "
             "Homomorphic Encryption Library"
         ),
-        authors="F. Aydin, E. Karabulut, et al.",
-        venue="DATE 2022 / IACR ePrint 2023/1128",
-        year=2023,
-        url="https://eprint.iacr.org/2023/1128",
-        eprint="2023/1128",
+        authors="F. Aydin, E. Karabulut, S. Potluri, E. Alkim, A. Aysu",
+        venue="DATE 2022 / IACR ePrint 2022/204 (follow-up: 2023/1128)",
+        year=2022,
+        url="https://eprint.iacr.org/2022/204",
+        eprint="2022/204",
     )
 
     def run(self, adapter: LibraryAdapter, ctx: AdapterContext) -> AttackResult:

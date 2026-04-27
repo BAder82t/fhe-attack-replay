@@ -82,6 +82,34 @@ class Eprint2025_867(Attack):
     A ``VULNERABLE`` verdict from the live distinguisher is stronger than
     one from the fingerprint risk-check; the ``intent_actual`` field in
     evidence makes the distinction explicit.
+
+    **Scope of the live distinguisher.** This module times either
+    :meth:`adapter.decrypt` (default) or
+    ``Evaluator.transform_to_ntt_inplace`` (when the adapter exposes a
+    ``transform_to_ntt`` method and its fingerprint advertises
+    ``exposes_per_ntt_timing``) — today only the ``seal-python``
+    adapter offers the per-NTT primitive; ``openfhe-python`` and
+    ``TenSEAL`` (verified against openfhe-python ``v1.5.1.0`` / upstream
+    HEAD 2026-04-10 and TenSEAL 0.3.16) do not expose a comparable
+    surface, so the eprint-2025-867 replay falls back to whole-decrypt
+    timing for those backends. None of the three Python bindings
+    expose **per-NTT-butterfly** granularity (the level the published
+    paper actually attacks); upstream ``TimeVar``/``TIC``/``TOC``
+    instrumentation in OpenFHE is confined to standalone benchmark
+    executables in ``src/core/extras/`` and SEAL has no equivalent.
+
+    Note that the published RevEAL (ePrint 2022/204) and ePrint
+    2025/867 attacks are **power / EM side channels** captured on
+    FPGA / Cortex-M targets — not software-timing attacks. This
+    module's live distinguisher is a software-timing analog: a
+    ``VULNERABLE`` verdict shows the implementation has a measurable
+    data-dependent timing channel; a ``SAFE`` verdict only attests
+    that the timing channel was flat across the supplied stimuli on
+    this run. For hardware-grade evidence at the published
+    methodology's resolution, capture traces externally and feed them
+    to :class:`reveal-2023-1128` via ``--evidence trace=PATH`` —
+    that module ships an in-tree Pearson correlation analyzer that
+    consumes the same trace formats real SCA rigs produce.
     """
 
     id = "eprint-2025-867"
@@ -231,27 +259,51 @@ class Eprint2025_867(Attack):
         started = time.monotonic()
         repeats, stimuli, cv_threshold, seed = self._replay_config(ctx)
 
+        # Prefer per-NTT-call timing when the adapter exposes
+        # ``transform_to_ntt`` (today: seal-python). The whole-decrypt
+        # fallback stays as the default; the seal-python path delivers
+        # ~10⁵× finer granularity by isolating the NTT phase from the
+        # rest of decrypt.
+        ntt_op = getattr(adapter, "transform_to_ntt", None)
+        ntt_capable = callable(ntt_op) and bool(
+            fp.get("exposes_per_ntt_timing", False)
+        )
+
         # Encrypt each stimulus once; reuse the same ciphertext across
-        # repeats so timing variance reflects the decrypt path, not the
-        # adapter's encrypt RNG. The Cheon attack uses a similar trick.
+        # repeats so timing variance reflects the measured operation,
+        # not the adapter's encrypt RNG.
         ciphertexts = [adapter.encrypt(ctx, list(stim)) for stim in stimuli]
 
-        # Warm up: the first decrypt() call typically pays JIT / cache /
-        # allocator costs that swamp the leak signal. Drop two warmups
-        # per ciphertext from the timed sample.
+        # Choose the per-trial measurement primitive.
+        if ntt_capable:
+            test_label = "transform_to_ntt_timing_distinguisher"
+            measured_op = "Evaluator.transform_to_ntt_inplace"
+
+            def _time_one(ct: Any) -> int:
+                t0 = time.perf_counter_ns()
+                ntt_op(ctx, ct)
+                return time.perf_counter_ns() - t0
+        else:
+            test_label = "decrypt_timing_distinguisher"
+            measured_op = "adapter.decrypt"
+
+            def _time_one(ct: Any) -> int:
+                t0 = time.perf_counter_ns()
+                adapter.decrypt(ctx, ct)
+                return time.perf_counter_ns() - t0
+
+        # Warm up: the first call typically pays JIT / cache / allocator
+        # costs that swamp the leak signal. Drop two warmups per
+        # ciphertext from the timed sample.
         for ct in ciphertexts:
-            adapter.decrypt(ctx, ct)
-            adapter.decrypt(ctx, ct)
+            _time_one(ct)
+            _time_one(ct)
 
         per_stim_means: list[float] = []
         per_stim_stdevs: list[float] = []
         per_stim_samples: list[list[float]] = []
         for ct in ciphertexts:
-            samples_ns: list[int] = []
-            for _ in range(repeats):
-                t0 = time.perf_counter_ns()
-                adapter.decrypt(ctx, ct)
-                samples_ns.append(time.perf_counter_ns() - t0)
+            samples_ns = [_time_one(ct) for _ in range(repeats)]
             samples_s = [s / 1e9 for s in samples_ns]
             per_stim_samples.append(samples_s)
             per_stim_means.append(statistics.fmean(samples_s))
@@ -269,7 +321,9 @@ class Eprint2025_867(Attack):
             "mode": "replay",
             "intent_actual": AttackIntent.REPLAY.value,
             "evaluator_fingerprint": fp,
-            "test": "decrypt_timing_distinguisher",
+            "test": test_label,
+            "measured_op": measured_op,
+            "ntt_capable": ntt_capable,
             "repeats_per_stimulus": repeats,
             "n_stimuli": len(stimuli),
             "stimuli_summary": [self._summarize_stimulus(s) for s in stimuli],
@@ -284,6 +338,8 @@ class Eprint2025_867(Attack):
             "library_class": "production",
             "citation": self.citation.url if self.citation else "",
         }
+
+        op_label = "NTT" if ntt_capable else "decrypt"
 
         if leakage_detected:
             known_surface = (
@@ -300,12 +356,13 @@ class Eprint2025_867(Attack):
                 duration_seconds=duration,
                 evidence=evidence,
                 message=(
-                    "Live timing distinguisher: per-stimulus mean decrypt "
-                    f"times differ by {spread*1e6:.1f}µs ({cv_observed*100:.1f}% "
-                    f"of the slower group's mean), exceeding the "
-                    f"{cv_threshold*100:.1f}% safe threshold. Decrypt path "
-                    "leaks data-dependent timing — matches the ePrint "
-                    "2025/867 SEAL/OpenFHE NTT guard/mul_root surface."
+                    f"Live timing distinguisher ({measured_op}): per-stimulus "
+                    f"mean {op_label} times differ by {spread*1e6:.1f}µs "
+                    f"({cv_observed*100:.1f}% of the slower group's mean), "
+                    f"exceeding the {cv_threshold*100:.1f}% safe threshold. "
+                    f"{op_label} path leaks data-dependent timing — matches "
+                    "the ePrint 2025/867 SEAL/OpenFHE NTT guard/mul_root "
+                    "surface."
                 ),
             )
 
@@ -317,11 +374,12 @@ class Eprint2025_867(Attack):
             duration_seconds=duration,
             evidence=evidence,
             message=(
-                "Live timing distinguisher: per-stimulus mean decrypt times "
-                f"differ by only {cv_observed*100:.2f}% of the slower group's "
-                f"mean (threshold={cv_threshold*100:.1f}%); no exploitable "
-                "data-dependent timing observed in this run. Repeat with "
-                "more stimuli or higher repeats for stronger assurance."
+                f"Live timing distinguisher ({measured_op}): per-stimulus "
+                f"mean {op_label} times differ by only {cv_observed*100:.2f}% "
+                f"of the slower group's mean (threshold="
+                f"{cv_threshold*100:.1f}%); no exploitable data-dependent "
+                "timing observed in this run. Repeat with more stimuli or "
+                "higher repeats for stronger assurance."
             ),
         )
 

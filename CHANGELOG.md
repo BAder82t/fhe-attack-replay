@@ -6,6 +6,36 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-04-27
+
+### Added — `seal-python` adapter + per-NTT timing for `eprint-2025-867`
+- **New `seal-python` adapter** (Huelse/SEAL-Python pybind binding,
+  v4.1.2.1). Distinct from the TenSEAL-backed `seal` adapter: thinner
+  wrapper exposes the full SEAL `Evaluator` surface including
+  `transform_to_ntt_inplace`, which the eprint-2025-867 live
+  distinguisher uses to time individual NTT calls instead of the
+  whole `decrypt()` path. Supports BFV / BGV / CKKS; `live_oracle=True`.
+- **`eprint-2025-867` live distinguisher now prefers per-NTT-call
+  timing** when the adapter exposes a `transform_to_ntt` method and
+  its fingerprint advertises `exposes_per_ntt_timing=True` (today only
+  the `seal-python` adapter). The whole-decrypt fallback stays the
+  default for `openfhe-python` and `TenSEAL`. Replay evidence now
+  carries `test=transform_to_ntt_timing_distinguisher` (or the
+  `decrypt_*` variant), `measured_op` (e.g.
+  `Evaluator.transform_to_ntt_inplace`), and `ntt_capable` so audit
+  consumers can tell which primitive produced the verdict.
+- `eprint-2025-867` docstring now documents that the published RevEAL
+  / 2025-867 attacks are **power / EM side channels**, not software
+  timing — this module's live distinguisher is a software-timing
+  analog with the noted granularity caveats.
+
+### Fixed
+- **`reveal-2023-1128` citation** now correctly points at IACR ePrint
+  **2022/204** (the original RevEAL paper, DATE 2022) with the
+  follow-up 2023/1128 noted in the venue field. The module slug is
+  preserved for catalog stability. Author list expanded to all five
+  named authors (Aydin, Karabulut, Potluri, Alkim, Aysu).
+
 ## [0.1.2] - 2026-04-27
 
 ### Added — `reveal-2023-1128` in-tree single-trace correlation analyzer
