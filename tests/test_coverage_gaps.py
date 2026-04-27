@@ -109,21 +109,29 @@ def test_lattigo_setup_runtime_error_when_helper_missing(monkeypatch):
         adapter.setup("BFV", {})
 
 
-def test_lattigo_setup_not_implemented_when_helper_present(monkeypatch):
+def test_lattigo_setup_errors_when_helper_path_invalid(monkeypatch):
+    # `shutil.which` returning a fake path that isn't actually
+    # executable triggers `subprocess.Popen` to fail. The adapter
+    # surfaces that as an error (FileNotFoundError or PermissionError)
+    # rather than a silent no-op.
     adapter = LattigoAdapter()
     monkeypatch.setattr(
         "fhe_attack_replay.adapters.lattigo.shutil.which", lambda _name: "/fake/bin"
     )
     assert adapter.is_available() is True
-    with pytest.raises(NotImplementedError, match="scaffold"):
+    with pytest.raises((FileNotFoundError, PermissionError, OSError)):
         adapter.setup("BFV", {})
 
 
-def test_lattigo_encrypt_decrypt_and_fingerprint_are_scaffolds():
+def test_lattigo_encrypt_decrypt_require_helper_handle():
+    # Without a live helper handle in the context, the IPC ops raise
+    # KeyError on the `handles["helper"]` lookup. This is by design —
+    # the runner should never invoke encrypt/decrypt on a context that
+    # didn't go through `setup()`.
     adapter = LattigoAdapter()
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(KeyError):
         adapter.encrypt(_synthetic_ctx("lattigo"), 0)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(KeyError):
         adapter.decrypt(_synthetic_ctx("lattigo"), object())
     fp = adapter.evaluator_fingerprint(_synthetic_ctx("lattigo"))
     assert fp["implementation"] == "tuneinsight/lattigo"
@@ -139,21 +147,21 @@ def test_tfhe_rs_setup_runtime_error_when_helper_missing(monkeypatch):
         adapter.setup("TFHE", {})
 
 
-def test_tfhe_rs_setup_not_implemented_when_helper_present(monkeypatch):
+def test_tfhe_rs_setup_errors_when_helper_path_invalid(monkeypatch):
     adapter = TfheRsAdapter()
     monkeypatch.setattr(
         "fhe_attack_replay.adapters.tfhe_rs.shutil.which", lambda _name: "/fake/bin"
     )
     assert adapter.is_available() is True
-    with pytest.raises(NotImplementedError, match="scaffold"):
+    with pytest.raises((FileNotFoundError, PermissionError, OSError)):
         adapter.setup("TFHE", {})
 
 
-def test_tfhe_rs_encrypt_decrypt_and_fingerprint_are_scaffolds():
+def test_tfhe_rs_encrypt_decrypt_require_helper_handle():
     adapter = TfheRsAdapter()
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(KeyError):
         adapter.encrypt(_synthetic_ctx("tfhe-rs"), 0)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(KeyError):
         adapter.decrypt(_synthetic_ctx("tfhe-rs"), object())
     fp = adapter.evaluator_fingerprint(_synthetic_ctx("tfhe-rs"))
     assert fp["implementation"] == "zama-ai/tfhe-rs"

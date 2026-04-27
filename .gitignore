@@ -15,3 +15,8 @@ venv/
 coverage.xml
 htmlcov/
 .DS_Store
+
+# vendor crate build artefacts
+vendor/lattigo-helper/lattigo-helper
+vendor/lattigo-helper/fhe-replay-lattigo-helper
+vendor/tfhe-rs-helper/target/

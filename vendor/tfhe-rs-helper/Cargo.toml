@@ -1,0 +1,26 @@
+[package]
+name = "fhe-replay-tfhe-rs-helper"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "JSON-stdio bridge between Python fhe-attack-replay and zama-ai/tfhe-rs (scaffold)."
+
+[[bin]]
+name = "fhe-replay-tfhe-rs-helper"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# tfhe-rs itself is intentionally NOT a dependency of the v0.1.0 scaffold.
+# Adding it would pull in a multi-second compile against the zama crate
+# without giving the helper more functionality than the current
+# scaffold ops. The Cargo.toml below shows where to drop it once the
+# `setup` / `encrypt` / `decrypt` ops get wired:
+#
+#     tfhe = { version = "0.10", features = ["boolean", "shortint", "integer"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
