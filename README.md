@@ -122,10 +122,3 @@ ruff check .
 pytest -ra --cov=fhe_attack_replay
 ```
 
-## Roadmap
-
-This repo ships the scaffold from
-[Spec 2](../prototype_discovery_results.md#spec-2--fhe-attack-replay-approved-82100).
-Iteration order: adapter wiring → Cheon 2024/127 → eprint 2025/867 → RevEAL
-2023/1128 → Guo-Qian USENIX'24 → GlitchFHE USENIX'25 → Hexens PR + Zellic
-cross-reference + WAHC 2026 poster.
