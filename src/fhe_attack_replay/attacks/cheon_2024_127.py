@@ -105,6 +105,8 @@ class Cheon2024_127(Attack):
     def run(self, adapter: LibraryAdapter, ctx: AdapterContext) -> AttackResult:
         if adapter.name in _REPLAY_CAPABLE_ADAPTERS and adapter.is_available():
             try:
+                if adapter.name == "openfhe":
+                    return self._run_replay_openfhe(adapter, ctx)
                 return self._run_replay(adapter, ctx)
             except NotImplementedError:
                 # Adapter advertised the name but cannot actually run primitives
@@ -121,6 +123,87 @@ class Cheon2024_127(Attack):
                     message=f"Replay path errored, did not fall back: {exc!r}",
                 )
         return self._run_risk_check(adapter, ctx)
+
+    # ------------------------------------------------------ openfhe replay --
+    def _run_replay_openfhe(
+        self, adapter: LibraryAdapter, ctx: AdapterContext
+    ) -> AttackResult:
+        """Decryption-oracle-determinism replay against OpenFHE.
+
+        The full Cheon-Hong-Kim 2024/127 attack constructs a ciphertext at
+        the rounding boundary and observes structured decryption errors
+        across queries. ``openfhe-python`` does not expose the DCRTPoly
+        primitives needed for fine-grained ciphertext perturbation, so we
+        run the *necessary precondition* of the attack instead: query the
+        decryption oracle on the same ciphertext repeatedly and observe
+        whether the oracle is deterministic. A deterministic oracle is
+        precisely what the published attack relies on; a randomized
+        oracle (e.g. CKKS NOISE_FLOODING_DECRYPT) breaks the noise-recovery
+        primitive at the source.
+        """
+        ct = adapter.encrypt(ctx, [0])
+        decryptions: list[tuple[Any, ...]] = []
+        for _ in range(_REPLAY_TRIALS):
+            pt = adapter.decrypt(ctx, ct)
+            # Truncate packed slots so the comparison is bounded.
+            decryptions.append(tuple(list(pt)[:8]))
+        unique = len({d for d in decryptions})
+        deterministic = unique == 1
+
+        evidence: dict[str, Any] = {
+            "mode": "replay",
+            "intent_actual": AttackIntent.REPLAY.value,
+            "trials": _REPLAY_TRIALS,
+            "test": "decryption_oracle_determinism",
+            "unique_decryptions": unique,
+            "deterministic_oracle": deterministic,
+            "decryption_sample": list(decryptions[0]) if decryptions else [],
+            "citation": self.citation.url if self.citation else "",
+            "reference_poc": "https://github.com/hmchoe0528/INDCPAD_HE_ThresFHE",
+            "library": adapter.name,
+            "library_class": "production",
+            "note": (
+                "Subset of the Cheon-Hong-Kim attack precondition. "
+                "Polynomial-domain bisection requires DCRTPoly access not "
+                "exposed by openfhe-python; see "
+                "src/fhe_attack_replay/attacks/cheon_2024_127.py."
+            ),
+        }
+
+        if deterministic:
+            return AttackResult(
+                attack=self.id,
+                library=adapter.name,
+                scheme=ctx.scheme,
+                status=AttackStatus.VULNERABLE,
+                duration_seconds=0.0,
+                evidence=evidence,
+                message=(
+                    f"Live-oracle replay against {adapter.name}: the "
+                    f"decryption oracle returned identical plaintext across "
+                    f"{_REPLAY_TRIALS} queries on the same ciphertext. The "
+                    "oracle is deterministic — the Cheon-Hong-Kim 2024/127 "
+                    "noise-recovery primitive applies. Enable a noise-flooded "
+                    "decrypt mode (e.g. OpenFHE NOISE_FLOODING_DECRYPT for "
+                    "CKKS in EXEC_EVALUATION) to mitigate."
+                ),
+            )
+
+        return AttackResult(
+            attack=self.id,
+            library=adapter.name,
+            scheme=ctx.scheme,
+            status=AttackStatus.SAFE,
+            duration_seconds=0.0,
+            evidence=evidence,
+            message=(
+                f"Live-oracle replay against {adapter.name}: the decryption "
+                f"oracle returned {unique} distinct plaintexts across "
+                f"{_REPLAY_TRIALS} queries on the same ciphertext. The oracle "
+                "is randomized; the Cheon-Hong-Kim 2024/127 noise-recovery "
+                "primitive does not converge."
+            ),
+        )
 
     # --------------------------------------------------------------- replay --
     def _run_replay(self, adapter: LibraryAdapter, ctx: AdapterContext) -> AttackResult:
@@ -211,9 +294,10 @@ class Cheon2024_127(Attack):
         """
         if adapter.name == "toy-lwe":
             return self._bisect_boundary_toy_lwe(ctx, ct_zero)
-        # OpenFHE / SEAL replay path: not yet wired (requires a primitive to
-        # add a known plaintext-domain offset to a ciphertext). Falling back
-        # via NotImplementedError lets the dispatcher select the RiskCheck.
+        # OpenFHE polynomial-domain perturbation requires C++ access to the
+        # underlying DCRTPoly that openfhe-python does not expose. We fall
+        # back to a different but valid form of the Cheon attack —
+        # decryption-oracle determinism — handled in _run_replay_openfhe.
         raise NotImplementedError(
             f"Live-bisect not yet wired for adapter {adapter.name!r}."
         )

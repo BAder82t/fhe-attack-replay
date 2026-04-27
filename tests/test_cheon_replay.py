@@ -86,12 +86,11 @@ def test_replay_overall_status_vulnerable_drives_exit_code():
 
 
 def test_risk_check_path_still_works_for_non_replay_adapters():
-    # OpenFHE is registered but the native build is unavailable on macOS arm64
-    # CI; the adapter falls back to a synthetic context, which means the
-    # Replay path's `is_available` check returns False and the dispatcher
-    # selects the RiskCheck path.
+    # SEAL has no real bindings yet; the adapter falls back to a synthetic
+    # context, which means the Replay path's `is_available` check returns
+    # False and the dispatcher selects the RiskCheck path.
     report = run(
-        library="openfhe",
+        library="seal",
         params={
             "scheme": "BFV",
             "adversary_model": "ind-cpa-d",
@@ -100,8 +99,30 @@ def test_risk_check_path_still_works_for_non_replay_adapters():
         attacks=["cheon-2024-127"],
     )
     r = report.results[0]
-    assert r.evidence["mode"] in {"replay", "risk_check"}
-    # On a CI host without OpenFHE built, mode should be risk_check.
-    if r.evidence["mode"] == "risk_check":
-        assert r.status is AttackStatus.SAFE
-        assert r.evidence["mitigation_recognized"] is True
+    assert r.evidence["mode"] == "risk_check"
+    assert r.status is AttackStatus.SAFE
+    assert r.evidence["mitigation_recognized"] is True
+
+
+def test_replay_against_openfhe_when_available():
+    # When openfhe-python is importable (built locally), this test runs the
+    # decryption-oracle-determinism replay against real OpenFHE BFV.
+    # OpenFHE BFV decrypt is deterministic — Cheon 2024/127 applies — so
+    # the verdict is VULNERABLE.
+    pytest = __import__("pytest")
+    try:
+        __import__("openfhe")
+    except (ImportError, ModuleNotFoundError, OSError):
+        pytest.skip("openfhe-python not importable in this environment")
+    report = run(
+        library="openfhe",
+        params={"scheme": "BFV", "plaintext_modulus": 65537, "multiplicative_depth": 2},
+        attacks=["cheon-2024-127"],
+    )
+    r = report.results[0]
+    assert r.evidence["mode"] == "replay"
+    assert r.evidence["intent_actual"] == "replay"
+    assert r.evidence["test"] == "decryption_oracle_determinism"
+    assert r.evidence["library_class"] == "production"
+    assert r.evidence["deterministic_oracle"] is True
+    assert r.status is AttackStatus.VULNERABLE

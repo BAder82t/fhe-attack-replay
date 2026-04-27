@@ -18,7 +18,7 @@ from fhe_attack_replay.attacks.base import AttackIntent, AttackStatus
     ],
 )
 def test_cheon_vulnerable_when_oracle_and_no_mitigation(params):
-    report = run(library="openfhe", params=params, attacks=["cheon-2024-127"])
+    report = run(library="seal", params=params, attacks=["cheon-2024-127"])
     r = report.results[0]
     assert r.status is AttackStatus.VULNERABLE
     assert r.intent is AttackIntent.RISK_CHECK
@@ -39,7 +39,7 @@ def test_cheon_vulnerable_when_oracle_and_no_mitigation(params):
 )
 def test_cheon_safe_when_recognized_mitigation(noise_flooding):
     report = run(
-        library="openfhe",
+        library="seal",
         params={
             "scheme": "BFV",
             "adversary_model": "ind-cpa-d",
@@ -61,7 +61,7 @@ def test_cheon_safe_when_recognized_mitigation(noise_flooding):
     ],
 )
 def test_cheon_skipped_when_no_oracle_exposure(params):
-    report = run(library="openfhe", params=params, attacks=["cheon-2024-127"])
+    report = run(library="seal", params=params, attacks=["cheon-2024-127"])
     r = report.results[0]
     assert r.status is AttackStatus.SKIPPED
     assert r.evidence["decryption_oracle"] is False
@@ -71,7 +71,7 @@ def test_cheon_does_not_apply_to_ckks():
     # Cheon 2024/127 targets exact schemes. CKKS is approximate => SKIPPED via
     # applies_to_schemes (handled by the runner before the attack runs).
     report = run(
-        library="openfhe",
+        library="seal",
         params={"scheme": "CKKS", "adversary_model": "ind-cpa-d"},
         attacks=["cheon-2024-127"],
     )
@@ -81,7 +81,7 @@ def test_cheon_does_not_apply_to_ckks():
 
 def test_cheon_overall_status_is_vulnerable_for_vulnerable_config():
     report = run(
-        library="openfhe",
+        library="seal",
         params={"scheme": "BFV", "decryption_oracle": True, "noise_flooding": "none"},
         attacks=["cheon-2024-127"],
     )

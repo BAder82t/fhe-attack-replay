@@ -32,6 +32,8 @@ def test_cli_list_all(capsys):
 
 
 def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Path):
+    # Use seal (still a scaffold adapter without live bindings) so every
+    # attack module returns NOT_IMPLEMENTED, exercising the strict-exit path.
     params = tmp_path / "params.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
     out = tmp_path / "report.json"
@@ -40,7 +42,7 @@ def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Pat
         [
             "run",
             "--lib",
-            "openfhe",
+            "seal",
             "--params",
             str(params),
             "--output-json",
@@ -53,7 +55,7 @@ def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Pat
     # Default: NOT_IMPLEMENTED is a hard fail.
     assert rc == EXIT_NOT_IMPLEMENTED
     payload = json.loads(out.read_text())
-    assert payload["library"] == "openfhe"
+    assert payload["library"] == "seal"
     assert "coverage" in payload
     assert payload["coverage"]["requested"] >= 1
     assert badge.read_text().startswith("<svg")

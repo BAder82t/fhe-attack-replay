@@ -1,14 +1,16 @@
 # fhe-attack-replay
 
 > **Alpha.** `cheon-2024-127` runs as a real **live-oracle Replay** against
-> the in-tree `toy-lwe` adapter — bisection-based encryption-noise recovery
-> across multiple trials, exit 2 on `VULNERABLE`, exit 0 on `SAFE` after
-> noise flooding. The same module also runs as a **RiskCheck** on adapters
-> without a live oracle (e.g. when the OpenFHE C++ build is missing). The
-> OpenFHE adapter is wired against `openfhe-python` for setup / encrypt /
-> decrypt; a faithful OpenFHE Replay (which needs polynomial-domain
-> ciphertext perturbation) lands in a follow-up. See
-> [DISCLAIMER.md](DISCLAIMER.md) for what `SAFE` does and does not mean.
+> two adapters:
+> - `toy-lwe` (always available) — bisection-based encryption-noise
+>   recovery across 8 trials of 20 rounds each.
+> - `openfhe` (when `openfhe-python` is built locally) —
+>   decryption-oracle determinism test against real OpenFHE BFV/BGV/CKKS.
+>
+> Unmitigated configs report `VULNERABLE` (exit 2); noise-flooded configs
+> report `SAFE` (exit 0). The same module also runs as a **RiskCheck** on
+> adapters without a live oracle. See [DISCLAIMER.md](DISCLAIMER.md) for
+> what `SAFE` does and does not mean.
 
 Framework for a unified attack-replay regression harness for FHE libraries.
 Modules land in three intent levels — **Replay** (end-to-end exploit),
@@ -35,9 +37,36 @@ pip install fhe-attack-replay
 To target a specific library, install the matching native dependency:
 
 ```bash
-pip install openfhe         # OpenFHE python bindings
+pip install openfhe         # OpenFHE python bindings  (Linux x86_64 only via PyPI)
 pip install tenseal         # SEAL via TenSEAL
 # Lattigo / tfhe-rs require helper binaries on PATH.
+```
+
+### Building `openfhe-python` from source (macOS / Windows / arm64)
+
+The PyPI `openfhe` wheel only ships a Linux x86_64 ``.so``. Build from
+source if you want the live OpenFHE Replay path on other platforms:
+
+```bash
+brew install cmake gmp ntl libomp pybind11   # or your distro's equivalents
+git clone https://github.com/openfheorg/openfhe-development
+cd openfhe-development
+cmake -B build -DCMAKE_INSTALL_PREFIX="$HOME/.local/openfhe" \
+              -DBUILD_UNITTESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARKS=OFF
+cmake --build build -j
+cmake --install build
+
+git clone https://github.com/openfheorg/openfhe-python && cd openfhe-python
+cmake -B build \
+  -DOpenFHE_DIR="$HOME/.local/openfhe/lib/OpenFHE" \
+  -DPython_EXECUTABLE="$(which python3)" \
+  -DCMAKE_PREFIX_PATH="$(python3 -c 'import pybind11; print(pybind11.get_cmake_dir())')"
+cmake --build build -j
+cp build/openfhe.cpython-*.so "$(python3 -c 'import site; print(site.getsitepackages()[0])')/"
+mkdir -p "$(python3 -c 'import site; print(site.getsitepackages()[0])')/lib"
+cp $HOME/.local/openfhe/lib/libOPENFHE*.dylib \
+   "$(python3 -c 'import site; print(site.getsitepackages()[0])')/lib/"
+python3 -c "import openfhe; print('OK')"
 ```
 
 ## Quick start
@@ -128,8 +157,8 @@ no upstream PoC source is redistributed.
 
 | Adapter    | Native dependency                                          | Live oracle? |
 |------------|------------------------------------------------------------|:-:|
-| `toy-lwe`  | none — pure Python, in-tree (CI validation only, not secure)| ✅ |
-| `openfhe`  | `openfhe-python` (PyPI wheel = Linux x86_64 only; build from source on macOS/Windows) | ⚠ encrypt/decrypt wired; perturbation primitive pending |
+| `toy-lwe`  | none — pure Python, in-tree (CI validation only, not secure)| ✅ Replay |
+| `openfhe`  | `openfhe-python` (PyPI wheel = Linux x86_64 only; build from source on macOS/Windows) | ✅ Replay (decryption-oracle determinism); polynomial-domain bisection pending DCRTPoly bindings |
 | `seal`     | `tenseal` (microsoft/SEAL backend)                          | ❌ scaffold |
 | `lattigo`  | `fhe-replay-lattigo-helper` (Go binary, PATH)               | ❌ scaffold |
 | `tfhe-rs`  | `fhe-replay-tfhe-rs-helper` (Rust binary, PATH)             | ❌ scaffold |

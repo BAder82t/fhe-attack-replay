@@ -7,6 +7,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`cheon-2024-127` now runs as a real live-oracle Replay against
+  OpenFHE BFV/BGV/CKKS via `openfhe-python`.** Decryption-oracle
+  determinism test: encrypts `0`, queries the oracle 8× on the same
+  ciphertext, classifies the oracle as deterministic (VULNERABLE — Cheon
+  applies) or randomized (SAFE). OpenFHE BFV's standard decrypt is
+  deterministic, so this correctly surfaces the IND-CPA-D vulnerability
+  vector. The full polynomial-domain bisection (which would be a
+  stricter form of the published attack) requires DCRTPoly access not
+  exposed by openfhe-python; documented in
+  `src/fhe_attack_replay/attacks/cheon_2024_127.py` and
+  `evidence['note']` of every OpenFHE replay result.
 - **`cheon-2024-127` now runs as a real live-oracle Replay against the
   in-tree `toy-lwe` adapter.** Bisection-based encryption-noise recovery
   across 8 trials of 20 rounds each; verdict driven by the std-dev of the

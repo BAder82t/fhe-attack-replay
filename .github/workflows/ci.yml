@@ -27,11 +27,24 @@ jobs:
         run: ruff check .
       - name: Test
         run: pytest -ra --cov=fhe_attack_replay --cov-report=term-missing
-      - name: Smoke test CLI
+      - name: Smoke test CLI (toy-lwe live attack)
         run: |
           fhe-replay --version
           fhe-replay list all
-          fhe-replay run --lib openfhe --params examples/bfv-128.json \
+          # toy-lwe live-oracle replay: unmitigated config must report VULNERABLE (exit 2).
+          set +e
+          fhe-replay run --lib toy-lwe --params examples/toy-lwe-vulnerable.json \
+            --attacks cheon-2024-127 --output-json /tmp/v.json --quiet
+          rc_v=$?
+          set -e
+          test "$rc_v" = "2"
+          python -c "import json; d=json.load(open('/tmp/v.json')); assert d['overall_status']=='vulnerable'"
+          # toy-lwe live-oracle replay: noise-flooded config must report SAFE (exit 0).
+          fhe-replay run --lib toy-lwe --params examples/toy-lwe-mitigated.json \
+            --attacks cheon-2024-127 --output-json /tmp/m.json --quiet
+          python -c "import json; d=json.load(open('/tmp/m.json')); assert d['overall_status']=='safe'"
+          # SEAL adapter still scaffold: full run must report scaffolded coverage.
+          fhe-replay run --lib seal --params examples/bfv-128.json \
             --output-json /tmp/report.json --badge /tmp/badge.svg \
             --allow-not-implemented --allow-skipped --quiet
           test -s /tmp/report.json
