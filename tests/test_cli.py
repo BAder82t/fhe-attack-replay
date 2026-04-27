@@ -31,6 +31,16 @@ def test_cli_list_all(capsys):
     assert "cheon-2024-127" in out
 
 
+def test_cli_doctor(capsys):
+    rc = main(["doctor"])
+    out = capsys.readouterr().out
+    assert rc == EXIT_OK
+    assert "adapter status:" in out
+    assert "toy-lwe: available" in out
+    assert "openfhe:" in out
+    assert "dependency-free live replay" in out
+
+
 def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Path):
     # Use seal (still a scaffold adapter without live bindings) so every
     # attack module returns NOT_IMPLEMENTED, exercising the strict-exit path.

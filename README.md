@@ -73,9 +73,20 @@ python3 -c "import openfhe; print('OK')"
 
 ```bash
 fhe-replay list all
+fhe-replay doctor
 fhe-replay run --lib openfhe --params examples/bfv-128.json --attacks all \
     --output-json report.json --badge badge.svg
 ```
+
+For a dependency-free first run, use the in-tree toy LWE adapter:
+
+```bash
+fhe-replay run --lib toy-lwe --params examples/toy-lwe-vulnerable.json \
+    --attacks cheon-2024-127
+```
+
+`fhe-replay doctor` reports which native adapters are available on the
+current machine and prints the dependency note for each missing backend.
 
 Exit codes:
 
@@ -211,6 +222,8 @@ cd fhe-attack-replay
 python -m pip install -e ".[dev]"
 ruff check .
 pytest -ra --cov=fhe_attack_replay
+python -m build
+python -m twine check dist/*
 ```
 
 ## Project docs
@@ -220,4 +233,3 @@ pytest -ra --cov=fhe_attack_replay
 - [CONTRIBUTING.md](CONTRIBUTING.md) — module checklist and module-intent levels
 - [docs/status-semantics.md](docs/status-semantics.md) — per-attack status, intent levels, exit codes
 - [CHANGELOG.md](CHANGELOG.md)
-

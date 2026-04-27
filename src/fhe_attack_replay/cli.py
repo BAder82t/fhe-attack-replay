@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fhe_attack_replay import __version__
-from fhe_attack_replay.registry import list_adapters, list_attacks
+from fhe_attack_replay.registry import list_adapters, list_attacks, resolve_adapter
 from fhe_attack_replay.report import to_json, write_json, write_svg_badge
 from fhe_attack_replay.runner import RunReport, run
 
@@ -45,6 +45,11 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["libraries", "attacks", "all"],
         nargs="?",
         default="all",
+    )
+
+    sub.add_parser(
+        "doctor",
+        help="Show adapter availability and native dependency notes.",
     )
 
     _add_run_args(parser)
@@ -145,6 +150,28 @@ def _cmd_list(what: str) -> int:
     return EXIT_OK
 
 
+def _cmd_doctor() -> int:
+    print("adapter status:")
+    for name in list_adapters():
+        adapter = resolve_adapter(name)
+        try:
+            available = adapter.is_available()
+            error = ""
+        except Exception as exc:  # pragma: no cover - defensive for native imports
+            available = False
+            error = f" ({type(exc).__name__}: {exc})"
+        status = "available" if available else "missing"
+        native = "native dependency" if adapter.capability.requires_native else "in-tree"
+        schemes = ", ".join(adapter.capability.schemes) or "none"
+        print(f"  - {name}: {status} [{native}; schemes: {schemes}]{error}")
+        if adapter.capability.notes:
+            print(f"    note: {adapter.capability.notes}")
+    print()
+    print("Use `fhe-replay run --lib toy-lwe ...` for a dependency-free live replay.")
+    print("Native adapters can still run RiskCheck paths when their bindings are missing.")
+    return EXIT_OK
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     if not args.lib:
         print("error: --lib is required for `run`.", file=sys.stderr)
@@ -189,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "list":
         return _cmd_list(args.what)
+    if args.command == "doctor":
+        return _cmd_doctor()
     return _cmd_run(args)
 
 

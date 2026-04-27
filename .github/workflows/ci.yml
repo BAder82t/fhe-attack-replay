@@ -27,10 +27,15 @@ jobs:
         run: ruff check .
       - name: Test
         run: pytest -ra --cov=fhe_attack_replay --cov-report=term-missing
+      - name: Build package
+        run: python -m build
+      - name: Check package metadata
+        run: python -m twine check dist/*
       - name: Smoke test CLI (toy-lwe live attack)
         run: |
           fhe-replay --version
           fhe-replay list all
+          fhe-replay doctor
           # toy-lwe live-oracle replay: unmitigated config must report VULNERABLE (exit 2).
           set +e
           fhe-replay run --lib toy-lwe --params examples/toy-lwe-vulnerable.json \
