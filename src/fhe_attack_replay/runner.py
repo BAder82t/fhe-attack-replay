@@ -99,6 +99,7 @@ def _run_one(adapter: LibraryAdapter, ctx: AdapterContext, attack: Attack) -> At
             scheme=ctx.scheme,
             status=AttackStatus.SKIPPED,
             duration_seconds=0.0,
+            intent=attack.intent,
             evidence={"reason": f"Attack does not apply to scheme {ctx.scheme!r}."},
         )
     start = time.perf_counter()
@@ -111,6 +112,7 @@ def _run_one(adapter: LibraryAdapter, ctx: AdapterContext, attack: Attack) -> At
             scheme=ctx.scheme,
             status=AttackStatus.NOT_IMPLEMENTED,
             duration_seconds=time.perf_counter() - start,
+            intent=attack.intent,
             evidence={"exception": repr(exc)},
             message=str(exc),
         )
@@ -121,11 +123,14 @@ def _run_one(adapter: LibraryAdapter, ctx: AdapterContext, attack: Attack) -> At
             scheme=ctx.scheme,
             status=AttackStatus.ERROR,
             duration_seconds=time.perf_counter() - start,
+            intent=attack.intent,
             evidence={"traceback": traceback.format_exc()},
             message=repr(exc),
         )
     if result.duration_seconds == 0.0:
         result.duration_seconds = time.perf_counter() - start
+    # Enforce class-declared intent (defends against modules that forget to set it).
+    result.intent = attack.intent
     return result
 
 

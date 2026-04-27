@@ -4,7 +4,13 @@
 from __future__ import annotations
 
 from fhe_attack_replay.adapters.base import AdapterContext, LibraryAdapter
-from fhe_attack_replay.attacks.base import Attack, AttackResult, AttackStatus, Citation
+from fhe_attack_replay.attacks.base import (
+    Attack,
+    AttackIntent,
+    AttackResult,
+    AttackStatus,
+    Citation,
+)
 
 
 class Eprint2025_867(Attack):
@@ -22,6 +28,7 @@ class Eprint2025_867(Attack):
     id = "eprint-2025-867"
     title = "Side Channel Analysis in Homomorphic Encryption (RevEAL follow-up)"
     applies_to_schemes = ("BFV", "CKKS", "BGV")
+    intent = AttackIntent.RISK_CHECK
     citation = Citation(
         title="Side Channel Analysis in Homomorphic Encryption",
         authors="anonymous (IACR ePrint 2025/867)",

@@ -4,7 +4,7 @@
 """fhe-attack-replay: unified attack-replay regression harness for FHE libraries."""
 
 from fhe_attack_replay.adapters.base import LibraryAdapter
-from fhe_attack_replay.attacks.base import Attack, AttackResult, AttackStatus
+from fhe_attack_replay.attacks.base import Attack, AttackIntent, AttackResult, AttackStatus
 from fhe_attack_replay.registry import (
     list_adapters,
     list_attacks,
@@ -19,6 +19,7 @@ __version__ = "0.0.1"
 
 __all__ = [
     "Attack",
+    "AttackIntent",
     "AttackResult",
     "AttackStatus",
     "Coverage",

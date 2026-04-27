@@ -28,6 +28,23 @@ class AttackStatus(StrEnum):
     ERROR = "error"
 
 
+class AttackIntent(StrEnum):
+    """How a module decides VULNERABLE/SAFE.
+
+    REPLAY:        runs the exploit logic end-to-end against live ciphertexts.
+    RISK_CHECK:    detects known-vulnerable parameter/config patterns statically.
+    ARTIFACT_CHECK: validates traces, logs, or evidence files supplied by the user.
+
+    A SAFE result from a REPLAY is stronger than a SAFE from a RISK_CHECK,
+    which is stronger than a SAFE from an ARTIFACT_CHECK on user-supplied
+    evidence. See docs/status-semantics.md.
+    """
+
+    REPLAY = "replay"
+    RISK_CHECK = "risk_check"
+    ARTIFACT_CHECK = "artifact_check"
+
+
 @dataclass
 class Citation:
     title: str
@@ -45,12 +62,14 @@ class AttackResult:
     scheme: str
     status: AttackStatus
     duration_seconds: float
+    intent: AttackIntent = AttackIntent.REPLAY
     evidence: dict[str, Any] = field(default_factory=dict)
     message: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["status"] = self.status.value
+        d["intent"] = self.intent.value
         return d
 
 
@@ -67,6 +86,7 @@ class Attack(ABC):
     title: str = ""
     applies_to_schemes: tuple[str, ...] = ()
     citation: Citation | None = None
+    intent: AttackIntent = AttackIntent.REPLAY
 
     def applies(self, adapter: LibraryAdapter, scheme: str) -> bool:
         if not self.applies_to_schemes:

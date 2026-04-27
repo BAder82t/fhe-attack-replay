@@ -58,7 +58,8 @@ def test_overall_status_skipped_when_only_skips():
 
 
 def test_overall_status_not_implemented_when_any_pending():
-    report = run(library="openfhe", params={"scheme": "BFV"}, attacks=["cheon-2024-127"])
+    # glitchfhe-usenix25 is still a citation-bearing scaffold.
+    report = run(library="openfhe", params={"scheme": "BFV"}, attacks=["glitchfhe-usenix25"])
     assert report.overall_status is AttackStatus.NOT_IMPLEMENTED
     assert report.coverage.not_implemented == 1
 

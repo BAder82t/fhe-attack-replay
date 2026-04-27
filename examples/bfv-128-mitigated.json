@@ -1,0 +1,12 @@
+{
+  "_comment": "BFV at 128-bit security with IND-CPA-D adversary and noise-flooding decrypt enabled. Cheon 2024/127 should report SAFE.",
+  "scheme": "BFV",
+  "security_level": 128,
+  "ring_dimension": 8192,
+  "plaintext_modulus": 65537,
+  "coeff_modulus_bits": [60, 40, 40, 60],
+  "adversary_model": "ind-cpa-d",
+  "decryption_oracle": true,
+  "noise_flooding": "openfhe-NOISE_FLOODING_DECRYPT",
+  "constant_time_decrypt": false
+}

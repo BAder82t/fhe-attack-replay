@@ -1,17 +1,16 @@
 # fhe-attack-replay
 
-> **Alpha scaffold.** This repo currently provides the framework — CLI,
-> adapter registry, GitHub Action, JSON/SVG reporting, and citation-bearing
-> attack module stubs — for replaying published FHE attacks against a
-> `(library, params)` target. **No attack module has been implemented yet.**
-> A `SAFE` result here is not yet meaningful; today the harness should
-> exit non-zero (code 4) until at least one module produces real
-> `SAFE` / `VULNERABLE` / `SKIPPED` output. See [DISCLAIMER.md](DISCLAIMER.md).
+> **Alpha.** One module — `cheon-2024-127` — produces real `VULNERABLE` /
+> `SAFE` / `SKIPPED` verdicts as a static **RiskCheck**. The remaining four
+> modules are still citation-bearing scaffolds. A live-oracle **Replay** for
+> Cheon will land alongside the OpenFHE adapter wiring. See
+> [DISCLAIMER.md](DISCLAIMER.md) for what `SAFE` does and does not mean.
 
 Framework for a unified attack-replay regression harness for FHE libraries.
-Once attack modules land it will replay published attacks against any
-`(library, params)` configuration and emit a JSON report plus an SVG status
-badge.
+Modules land in three intent levels — **Replay** (end-to-end exploit),
+**RiskCheck** (static analysis of `(library, params)` against a known threat
+model), and **ArtifactCheck** (validates user-supplied traces or evidence).
+See [docs/status-semantics.md](docs/status-semantics.md).
 
 **License:** Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
@@ -59,15 +58,40 @@ Exit codes:
 `NOT_IMPLEMENTED` never silently passes by default — green CI requires real
 results. See [docs/status-semantics.md](docs/status-semantics.md).
 
-## Attack modules (all currently scaffolds)
+## Attack modules
 
-| ID                    | Source                                             |
-|-----------------------|----------------------------------------------------|
-| `cheon-2024-127`      | Cheon, Hong, Kim — IACR ePrint 2024/127            |
-| `reveal-2023-1128`    | Aydin, Karabulut et al. — IACR ePrint 2023/1128    |
-| `eprint-2025-867`     | Side-Channel Analysis in HE — IACR ePrint 2025/867 |
-| `guo-qian-usenix24`   | Guo et al. — USENIX Security 2024                  |
-| `glitchfhe-usenix25`  | Mankali et al. — USENIX Security 2025              |
+| ID                    | Source                                             | Intent           | Status     |
+|-----------------------|----------------------------------------------------|------------------|------------|
+| `cheon-2024-127`      | Cheon, Hong, Kim — IACR ePrint 2024/127            | RiskCheck        | implemented |
+| `eprint-2025-867`     | Side-Channel Analysis in HE — IACR ePrint 2025/867 | RiskCheck        | partial (fingerprint short-circuit) |
+| `reveal-2023-1128`    | Aydin, Karabulut et al. — IACR ePrint 2023/1128    | ArtifactCheck    | scaffold   |
+| `guo-qian-usenix24`   | Guo et al. — USENIX Security 2024                  | RiskCheck        | scaffold   |
+| `glitchfhe-usenix25`  | Mankali et al. — USENIX Security 2025              | ArtifactCheck    | scaffold   |
+
+### `cheon-2024-127` — IND-CPA-D RiskCheck
+
+Inspects `(scheme, adversary_model, decryption_oracle, noise_flooding)`
+against the Cheon-Hong-Kim 2024/127 threat model:
+
+```text
+oracle_access := decryption_oracle == True
+                 OR adversary_model in {ind-cpa-d, threshold, multi-party}
+mitigated    := noise_flooding in {openfhe-NOISE_FLOODING_DECRYPT,
+                                   eprint-2024-424,
+                                   eprint-2025-1627,
+                                   eprint-2025-1618,
+                                   noise-flooding}
+if not oracle_access:        SKIPPED  (threat model n/a)
+if mitigated:                SAFE
+else:                        VULNERABLE
+```
+
+Try it:
+
+```bash
+fhe-replay run --lib openfhe --params examples/bfv-128-vulnerable.json --attacks cheon-2024-127
+fhe-replay run --lib openfhe --params examples/bfv-128-mitigated.json  --attacks cheon-2024-127
+```
 
 Each module cites its source and (where applicable) the reference PoC. Replay
 implementations are written from public descriptions and ship under Apache-2.0;

@@ -71,7 +71,7 @@ def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path):
             "--params",
             str(params),
             "--attacks",
-            "cheon-2024-127",
+            "glitchfhe-usenix25",
             "--output-json",
             str(out),
             "--allow-not-implemented",
