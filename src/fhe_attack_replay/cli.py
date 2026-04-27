@@ -10,24 +10,26 @@ from pathlib import Path
 from typing import Any
 
 from fhe_attack_replay import __version__
-from fhe_attack_replay.attacks.base import AttackStatus
 from fhe_attack_replay.registry import list_adapters, list_attacks
 from fhe_attack_replay.report import to_json, write_json, write_svg_badge
-from fhe_attack_replay.runner import run
+from fhe_attack_replay.runner import RunReport, run
 
-_EXIT_OK = 0
-_EXIT_VULNERABLE = 2
-_EXIT_ERROR = 3
-_EXIT_USAGE = 64
+EXIT_OK = 0
+EXIT_VULNERABLE = 2
+EXIT_ERROR = 3
+EXIT_NOT_IMPLEMENTED = 4
+EXIT_ALL_SKIPPED = 5
+EXIT_USAGE = 64
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fhe-replay",
         description=(
-            "Unified attack-replay regression harness for FHE libraries. "
-            "Replays published attacks against a (library, params) target and "
-            "emits a JSON report plus an optional SVG status badge."
+            "Framework for replaying published FHE attacks against a "
+            "(library, params) target. Emits a JSON report and an SVG status "
+            "badge. NOT_IMPLEMENTED never silently passes by default — green "
+            "CI requires real results."
         ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -84,6 +86,16 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Suppress stdout JSON when --output-json is given.",
     )
+    p.add_argument(
+        "--allow-not-implemented",
+        action="store_true",
+        help="Treat NOT_IMPLEMENTED results as success (exit 0). Off by default.",
+    )
+    p.add_argument(
+        "--allow-skipped",
+        action="store_true",
+        help="Treat all-SKIPPED runs as success (exit 0). Off by default.",
+    )
 
 
 def _load_params(path: Path | None) -> dict[str, Any]:
@@ -103,12 +115,22 @@ def _resolve_attacks(spec: str) -> list[str] | None:
     return ids
 
 
-def _exit_code_for(status: AttackStatus) -> int:
-    if status is AttackStatus.VULNERABLE:
-        return _EXIT_VULNERABLE
-    if status is AttackStatus.ERROR:
-        return _EXIT_ERROR
-    return _EXIT_OK
+def _exit_code_for(
+    report: RunReport,
+    *,
+    allow_not_implemented: bool,
+    allow_skipped: bool,
+) -> int:
+    cov = report.coverage
+    if cov.vulnerable > 0:
+        return EXIT_VULNERABLE
+    if cov.errors > 0:
+        return EXIT_ERROR
+    if cov.not_implemented > 0 and not allow_not_implemented:
+        return EXIT_NOT_IMPLEMENTED
+    if cov.ran == 0 and cov.skipped > 0 and not allow_skipped:
+        return EXIT_ALL_SKIPPED
+    return EXIT_OK
 
 
 def _cmd_list(what: str) -> int:
@@ -120,13 +142,13 @@ def _cmd_list(what: str) -> int:
         print("attacks:")
         for attack_id in list_attacks():
             print(f"  - {attack_id}")
-    return _EXIT_OK
+    return EXIT_OK
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
     if not args.lib:
         print("error: --lib is required for `run`.", file=sys.stderr)
-        return _EXIT_USAGE
+        return EXIT_USAGE
     params = _load_params(args.params)
     attacks = _resolve_attacks(args.attacks)
     report = run(library=args.lib, params=params, attacks=attacks, scheme=args.scheme)
@@ -141,7 +163,25 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if args.badge:
         write_svg_badge(report, args.badge)
 
-    return _exit_code_for(report.overall_status)
+    rc = _exit_code_for(
+        report,
+        allow_not_implemented=args.allow_not_implemented,
+        allow_skipped=args.allow_skipped,
+    )
+    if rc == EXIT_NOT_IMPLEMENTED:
+        print(
+            f"warning: {report.coverage.not_implemented}/{report.coverage.requested} "
+            "selected attack(s) are NOT_IMPLEMENTED. Pass --allow-not-implemented "
+            "to treat as success.",
+            file=sys.stderr,
+        )
+    elif rc == EXIT_ALL_SKIPPED:
+        print(
+            "warning: every selected attack was SKIPPED; no attack actually ran. "
+            "Pass --allow-skipped to treat as success.",
+            file=sys.stderr,
+        )
+    return rc
 
 
 def main(argv: list[str] | None = None) -> int:

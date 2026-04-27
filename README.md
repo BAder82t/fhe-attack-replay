@@ -1,11 +1,17 @@
 # fhe-attack-replay
 
-Unified attack-replay regression harness for FHE libraries. Replays published
-attacks against any `(library, params)` configuration and emits a JSON report
-plus a status SVG badge.
+> **Alpha scaffold.** This repo currently provides the framework — CLI,
+> adapter registry, GitHub Action, JSON/SVG reporting, and citation-bearing
+> attack module stubs — for replaying published FHE attacks against a
+> `(library, params)` target. **No attack module has been implemented yet.**
+> A `SAFE` result here is not yet meaningful; today the harness should
+> exit non-zero (code 4) until at least one module produces real
+> `SAFE` / `VULNERABLE` / `SKIPPED` output. See [DISCLAIMER.md](DISCLAIMER.md).
 
-**Status:** alpha scaffold — five attacks wired as `NOT_IMPLEMENTED` placeholders;
-adapter and CLI surface are stable.
+Framework for a unified attack-replay regression harness for FHE libraries.
+Once attack modules land it will replay published attacks against any
+`(library, params)` configuration and emit a JSON report plus an SVG status
+badge.
 
 **License:** Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
@@ -13,10 +19,9 @@ adapter and CLI surface are stable.
 
 Hexens [awesome-fhe-attacks](https://github.com/Hexens/awesome-fhe-attacks) curates
 attacks but does not run them. Every library and downstream user re-implements
-attack PoCs ad-hoc to verify a fix. `fhe-attack-replay` ships one runner that
-re-executes published attacks against your library/params configuration so you
-can answer the question "is my CKKS config still vulnerable to Cheon 2024/127?"
-in seconds.
+attack PoCs ad-hoc to verify a fix. `fhe-attack-replay` is the framework that —
+once the attack modules land — will let you answer the question "is my CKKS
+config still vulnerable to Cheon 2024/127?" in seconds.
 
 ## Install
 
@@ -42,14 +47,19 @@ fhe-replay run --lib openfhe --params examples/bfv-128.json --attacks all \
 
 Exit codes:
 
-| Code | Meaning                                  |
-|-----:|------------------------------------------|
-| 0    | All attacks reported SAFE / SKIPPED / NOT_IMPLEMENTED |
-| 2    | At least one attack reported VULNERABLE  |
-| 3    | Internal error during replay             |
-| 64   | Usage error                              |
+| Code | Meaning                                                                       |
+|-----:|-------------------------------------------------------------------------------|
+| 0    | At least one attack ran and every result was `SAFE` (or `SKIPPED` if allowed) |
+| 2    | At least one attack reported `VULNERABLE`                                     |
+| 3    | Internal error during replay                                                  |
+| 4    | One or more selected attacks were `NOT_IMPLEMENTED` (override: `--allow-not-implemented`) |
+| 5    | Every selected attack was `SKIPPED` and no attack ran (override: `--allow-skipped`) |
+| 64   | Usage error                                                                   |
 
-## Replayed attacks
+`NOT_IMPLEMENTED` never silently passes by default — green CI requires real
+results. See [docs/status-semantics.md](docs/status-semantics.md).
+
+## Attack modules (all currently scaffolds)
 
 | ID                    | Source                                             |
 |-----------------------|----------------------------------------------------|
@@ -121,4 +131,12 @@ python -m pip install -e ".[dev]"
 ruff check .
 pytest -ra --cov=fhe_attack_replay
 ```
+
+## Project docs
+
+- [DISCLAIMER.md](DISCLAIMER.md) — what `SAFE` does and does not mean
+- [SECURITY.md](SECURITY.md) — vulnerability reporting policy
+- [CONTRIBUTING.md](CONTRIBUTING.md) — module checklist and module-intent levels
+- [docs/status-semantics.md](docs/status-semantics.md) — per-attack status, intent levels, exit codes
+- [CHANGELOG.md](CHANGELOG.md)
 

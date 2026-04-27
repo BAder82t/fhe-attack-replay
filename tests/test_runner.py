@@ -28,6 +28,7 @@ def test_run_with_subset_of_attacks():
     )
     ids = [r.attack for r in report.results]
     assert ids == ["eprint-2025-867", "guo-qian-usenix24"]
+    assert report.coverage.requested == 2
 
 
 def test_report_serializes_to_json():
@@ -36,17 +37,34 @@ def test_report_serializes_to_json():
     assert payload["library"] == "openfhe"
     assert payload["overall_status"] in {s.value for s in AttackStatus}
     assert payload["results"][0]["attack"] == "cheon-2024-127"
+    cov = payload["coverage"]
+    assert {"requested", "ran", "safe", "vulnerable", "skipped",
+            "not_implemented", "errors", "implemented", "ratio"} <= set(cov)
+    assert cov["requested"] == 1
+    assert 0.0 <= cov["ratio"] <= 1.0
 
 
 def test_skipped_when_attack_does_not_apply_to_scheme():
     # GuoQian only applies to CKKS — running with BFV should produce SKIPPED.
     report = run(library="openfhe", params={"scheme": "BFV"}, attacks=["guo-qian-usenix24"])
     assert report.results[0].status is AttackStatus.SKIPPED
+    assert report.coverage.skipped == 1
+    assert report.coverage.ran == 0
 
 
-def test_constant_time_decrypt_marks_eprint_2025_867_safe():
+def test_overall_status_skipped_when_only_skips():
+    report = run(library="openfhe", params={"scheme": "BFV"}, attacks=["guo-qian-usenix24"])
+    assert report.overall_status is AttackStatus.SKIPPED
+
+
+def test_overall_status_not_implemented_when_any_pending():
+    report = run(library="openfhe", params={"scheme": "BFV"}, attacks=["cheon-2024-127"])
+    assert report.overall_status is AttackStatus.NOT_IMPLEMENTED
+    assert report.coverage.not_implemented == 1
+
+
+def test_constant_time_decrypt_marks_eprint_2025_867_safe_and_overall_safe():
     # eprint-2025-867 short-circuits to SAFE when the adapter advertises constant-time decrypt.
-    # The OpenFHE stub adapter advertises False, so we monkeypatch via a custom adapter.
     from fhe_attack_replay.adapters.base import (
         AdapterCapability,
         AdapterContext,
@@ -59,7 +77,7 @@ def test_constant_time_decrypt_marks_eprint_2025_867_safe():
         capability = AdapterCapability(schemes=("BFV", "CKKS"))
 
         def is_available(self):
-            return False  # exercise the synthetic-context fallback
+            return False
 
         def setup(self, scheme, params):
             return AdapterContext(library=self.name, scheme=scheme, params=params)
@@ -76,3 +94,8 @@ def test_constant_time_decrypt_marks_eprint_2025_867_safe():
     register_adapter(_CTAdapter)
     report = run(library="synthetic-ct", params={"scheme": "BFV"}, attacks=["eprint-2025-867"])
     assert report.results[0].status is AttackStatus.SAFE
+    assert report.overall_status is AttackStatus.SAFE
+    assert report.coverage.safe == 1
+    assert report.coverage.ran == 1
+    assert report.coverage.implemented == 1
+    assert report.coverage.ratio == 1.0

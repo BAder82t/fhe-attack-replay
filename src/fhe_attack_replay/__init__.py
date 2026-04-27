@@ -13,7 +13,7 @@ from fhe_attack_replay.registry import (
     resolve_adapter,
     resolve_attack,
 )
-from fhe_attack_replay.runner import RunReport, run
+from fhe_attack_replay.runner import Coverage, RunReport, run
 
 __version__ = "0.0.1"
 
@@ -21,6 +21,7 @@ __all__ = [
     "Attack",
     "AttackResult",
     "AttackStatus",
+    "Coverage",
     "LibraryAdapter",
     "RunReport",
     "list_adapters",

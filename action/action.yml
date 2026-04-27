@@ -28,10 +28,14 @@ inputs:
     description: "Path to write the SVG status badge."
     required: false
     default: "fhe-replay-badge.svg"
-  fail-on-vulnerable:
-    description: "Fail the job if any attack reports VULNERABLE."
+  allow-not-implemented:
+    description: "Treat NOT_IMPLEMENTED results as success. Off by default — green CI requires real results."
     required: false
-    default: "true"
+    default: "false"
+  allow-skipped:
+    description: "Treat all-SKIPPED runs as success. Off by default."
+    required: false
+    default: "false"
 
 outputs:
   report:
@@ -41,8 +45,11 @@ outputs:
     description: "Path to the SVG badge."
     value: ${{ steps.run.outputs.badge }}
   status:
-    description: "Overall status: safe | vulnerable | error | not_implemented."
+    description: "Overall status: safe | vulnerable | error | not_implemented | skipped."
     value: ${{ steps.run.outputs.status }}
+  coverage-ratio:
+    description: "Implemented-attacks ratio (0.0 - 1.0)."
+    value: ${{ steps.run.outputs.coverage_ratio }}
 
 runs:
   using: "composite"
@@ -61,13 +68,19 @@ runs:
     - name: Replay attacks
       id: run
       shell: bash
-      env:
-        FAIL_ON_VULNERABLE: ${{ inputs.fail-on-vulnerable }}
       run: |
         set -e
         scheme_arg=""
         if [ -n "${{ inputs.scheme }}" ]; then
           scheme_arg="--scheme ${{ inputs.scheme }}"
+        fi
+        allow_ni=""
+        if [ "${{ inputs.allow-not-implemented }}" = "true" ]; then
+          allow_ni="--allow-not-implemented"
+        fi
+        allow_skip=""
+        if [ "${{ inputs.allow-skipped }}" = "true" ]; then
+          allow_skip="--allow-skipped"
         fi
         set +e
         fhe-replay run \
@@ -77,19 +90,21 @@ runs:
           --output-json "${{ inputs.output-json }}" \
           --badge "${{ inputs.badge }}" \
           --quiet \
-          $scheme_arg
+          $scheme_arg $allow_ni $allow_skip
         rc=$?
         set -e
-        status=$(python -c "import json,sys; print(json.load(open('${{ inputs.output-json }}'))['overall_status'])")
+        status=$(python -c "import json; print(json.load(open('${{ inputs.output-json }}'))['overall_status'])")
+        ratio=$(python -c "import json; print(json.load(open('${{ inputs.output-json }}'))['coverage']['ratio'])")
         echo "report=${{ inputs.output-json }}" >> "$GITHUB_OUTPUT"
         echo "badge=${{ inputs.badge }}" >> "$GITHUB_OUTPUT"
         echo "status=$status" >> "$GITHUB_OUTPUT"
-        if [ "$FAIL_ON_VULNERABLE" = "true" ] && [ "$rc" -eq 2 ]; then
-          echo "::error::fhe-attack-replay reported VULNERABLE." >&2
-          exit 2
-        fi
-        if [ "$rc" -eq 3 ]; then
-          echo "::error::fhe-attack-replay encountered an internal error." >&2
-          exit 3
-        fi
-        exit 0
+        echo "coverage_ratio=$ratio" >> "$GITHUB_OUTPUT"
+        case "$rc" in
+          0) ;;
+          2) echo "::error::fhe-attack-replay reported VULNERABLE." >&2 ;;
+          3) echo "::error::fhe-attack-replay encountered an internal error." >&2 ;;
+          4) echo "::error::fhe-attack-replay: one or more selected attacks are NOT_IMPLEMENTED. Set allow-not-implemented: true to ignore." >&2 ;;
+          5) echo "::error::fhe-attack-replay: every selected attack was SKIPPED. Set allow-skipped: true to ignore." >&2 ;;
+          *) echo "::error::fhe-attack-replay: unexpected exit $rc" >&2 ;;
+        esac
+        exit $rc

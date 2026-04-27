@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import time
 import traceback
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -14,11 +15,54 @@ from fhe_attack_replay.registry import list_attacks, resolve_adapter, resolve_at
 
 
 @dataclass
+class Coverage:
+    """Per-status counts plus a few derived ratios.
+
+    Surfaced in the JSON report so consumers can detect "all green but no
+    attack actually ran" without parsing the result list themselves.
+    """
+
+    requested: int = 0
+    ran: int = 0
+    safe: int = 0
+    vulnerable: int = 0
+    skipped: int = 0
+    not_implemented: int = 0
+    errors: int = 0
+
+    @property
+    def implemented(self) -> int:
+        # Anything that produced a real verdict counts as implemented coverage.
+        return self.safe + self.vulnerable + self.errors
+
+    @property
+    def ratio(self) -> float:
+        if self.requested == 0:
+            return 0.0
+        return self.implemented / self.requested
+
+    @classmethod
+    def from_results(cls, requested: int, results: list[AttackResult]) -> Coverage:
+        counts = Counter(r.status for r in results)
+        ran_statuses = (AttackStatus.SAFE, AttackStatus.VULNERABLE, AttackStatus.ERROR)
+        return cls(
+            requested=requested,
+            ran=sum(counts[s] for s in ran_statuses),
+            safe=counts[AttackStatus.SAFE],
+            vulnerable=counts[AttackStatus.VULNERABLE],
+            skipped=counts[AttackStatus.SKIPPED],
+            not_implemented=counts[AttackStatus.NOT_IMPLEMENTED],
+            errors=counts[AttackStatus.ERROR],
+        )
+
+
+@dataclass
 class RunReport:
     library: str
     scheme: str
     params: dict[str, Any]
     results: list[AttackResult] = field(default_factory=list)
+    coverage: Coverage = field(default_factory=Coverage)
 
     @property
     def overall_status(self) -> AttackStatus:
@@ -28,15 +72,21 @@ class RunReport:
         for r in self.results:
             if r.status is AttackStatus.ERROR:
                 return AttackStatus.ERROR
-        if self.results and all(
-            r.status in (AttackStatus.SAFE, AttackStatus.SKIPPED) for r in self.results
-        ):
+        if any(r.status is AttackStatus.NOT_IMPLEMENTED for r in self.results):
+            return AttackStatus.NOT_IMPLEMENTED
+        if self.results and any(r.status is AttackStatus.SAFE for r in self.results):
             return AttackStatus.SAFE
-        return AttackStatus.NOT_IMPLEMENTED
+        # Empty result set or every result skipped — nothing actually ran.
+        return AttackStatus.SKIPPED
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["results"] = [r.to_dict() for r in self.results]
+        d["coverage"] = {
+            **asdict(self.coverage),
+            "implemented": self.coverage.implemented,
+            "ratio": round(self.coverage.ratio, 4),
+        }
         d["overall_status"] = self.overall_status.value
         return d
 
@@ -116,8 +166,14 @@ def run(
     ctx = _setup_or_synthetic(adapter, resolved_scheme, params)
 
     attack_ids = attacks if attacks is not None else list_attacks()
-    report = RunReport(library=adapter.name, scheme=resolved_scheme, params=params)
+    results: list[AttackResult] = []
     for attack_id in attack_ids:
         attack = resolve_attack(attack_id)
-        report.results.append(_run_one(adapter, ctx, attack))
-    return report
+        results.append(_run_one(adapter, ctx, attack))
+    return RunReport(
+        library=adapter.name,
+        scheme=resolved_scheme,
+        params=params,
+        results=results,
+        coverage=Coverage.from_results(len(attack_ids), results),
+    )

@@ -33,13 +33,17 @@ def write_json(report: RunReport, path: str | Path, indent: int = 2) -> Path:
 def _summary_label(report: RunReport) -> tuple[str, str]:
     counts = Counter(r.status for r in report.results)
     overall = report.overall_status
-    label = f"{counts[AttackStatus.SAFE]}/{len(report.results)} safe"
+    cov = report.coverage
     if counts[AttackStatus.VULNERABLE]:
         label = f"{counts[AttackStatus.VULNERABLE]} vulnerable"
     elif counts[AttackStatus.ERROR]:
         label = f"{counts[AttackStatus.ERROR]} error"
-    elif counts[AttackStatus.NOT_IMPLEMENTED] == len(report.results):
-        label = "scaffold"
+    elif counts[AttackStatus.NOT_IMPLEMENTED]:
+        label = f"{cov.implemented}/{cov.requested} implemented"
+    elif cov.ran == 0:
+        label = "no attacks ran"
+    else:
+        label = f"{counts[AttackStatus.SAFE]}/{cov.ran} safe"
     return label, _BADGE_COLORS.get(overall, _BADGE_COLORS[AttackStatus.NOT_IMPLEMENTED])
 
 

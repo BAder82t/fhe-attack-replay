@@ -32,6 +32,8 @@ jobs:
           fhe-replay --version
           fhe-replay list all
           fhe-replay run --lib openfhe --params examples/bfv-128.json \
-            --output-json /tmp/report.json --badge /tmp/badge.svg --quiet || true
+            --output-json /tmp/report.json --badge /tmp/badge.svg \
+            --allow-not-implemented --allow-skipped --quiet
           test -s /tmp/report.json
           test -s /tmp/badge.svg
+          python -c "import json; d=json.load(open('/tmp/report.json')); assert 'coverage' in d and d['coverage']['requested'] == 5"
