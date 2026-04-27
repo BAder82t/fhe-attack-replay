@@ -66,19 +66,14 @@ def test_overall_status_skipped_when_only_skips():
     assert report.overall_status is AttackStatus.SKIPPED
 
 
-def test_overall_status_not_implemented_when_any_pending(tmp_path):
-    # reveal-2023-1128 returns NOT_IMPLEMENTED when a trace path is supplied
-    # but ``hamming_weight_signature`` is not declared (the in-tree
-    # single-trace correlation analyzer is still pending).
-    trace = tmp_path / "trace.bin"
-    trace.write_bytes(b"\x00\x01" * 256)
+def test_overall_status_not_implemented_when_any_pending(pending_attack_id):
+    # All shipped attack modules now produce real verdicts; the
+    # ``pending_attack_id`` fixture registers a synthetic NOT_IMPLEMENTED
+    # attack so the runner's status-aggregation logic stays exercised.
     report = run(
         library="seal",
-        params={
-            "scheme": "BFV",
-            "evidence_paths": {"trace": str(trace)},
-        },
-        attacks=["reveal-2023-1128"],
+        params={"scheme": "BFV"},
+        attacks=[pending_attack_id],
     )
     assert report.overall_status is AttackStatus.NOT_IMPLEMENTED
     assert report.coverage.not_implemented == 1

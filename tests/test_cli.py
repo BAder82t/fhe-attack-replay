@@ -72,15 +72,13 @@ def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Pat
     assert badge.read_text().startswith("<svg")
 
 
-def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path):
-    # reveal-2023-1128 returns NOT_IMPLEMENTED when a trace evidence path
-    # is present but ``hamming_weight_signature`` is not declared. (The
-    # glitchfhe analyzer now produces a real verdict so it is no longer
-    # the right vehicle for exercising the NOT_IMPLEMENTED CLI path.)
+def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path, pending_attack_id):
+    # Every shipped attack module now produces a real verdict (live or
+    # ArtifactCheck). The ``pending_attack_id`` fixture registers a
+    # test-only synthetic attack that returns NOT_IMPLEMENTED so we can
+    # still exercise the ``--allow-not-implemented`` exit path.
     params = tmp_path / "params.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
-    trace = tmp_path / "trace.bin"
-    trace.write_text("synthetic trace bytes")
     out = tmp_path / "report.json"
     rc = main(
         [
@@ -90,9 +88,7 @@ def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path):
             "--params",
             str(params),
             "--attacks",
-            "reveal-2023-1128",
-            "--evidence",
-            f"trace={trace}",
+            pending_attack_id,
             "--output-json",
             str(out),
             "--allow-not-implemented",
@@ -102,11 +98,9 @@ def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path):
     assert rc == EXIT_OK
 
 
-def test_cli_run_min_coverage_fails_low_coverage(tmp_path: Path):
+def test_cli_run_min_coverage_fails_low_coverage(tmp_path: Path, pending_attack_id):
     params = tmp_path / "params.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
-    trace = tmp_path / "trace.bin"
-    trace.write_text("synthetic trace bytes")
     out = tmp_path / "report.json"
     rc = main(
         [
@@ -116,9 +110,7 @@ def test_cli_run_min_coverage_fails_low_coverage(tmp_path: Path):
             "--params",
             str(params),
             "--attacks",
-            "reveal-2023-1128",
-            "--evidence",
-            f"trace={trace}",
+            pending_attack_id,
             "--output-json",
             str(out),
             "--allow-not-implemented",

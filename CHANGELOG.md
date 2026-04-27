@@ -6,6 +6,41 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-27
+
+### Added — `reveal-2023-1128` in-tree single-trace correlation analyzer
+- **`reveal-2023-1128` now ships an in-tree Pearson-correlation
+  analyzer** that replaces the prior `NOT_IMPLEMENTED` placeholder.
+  Pass a trace via `--evidence trace=PATH` pointing to a JSON
+  document with `samples: [float]` and
+  `model: [{label, predictions: [float]}]`. The analyzer computes
+  Pearson |ρ| between the trace samples and each candidate model's
+  predictions, picks the strongest, and reports `VULNERABLE` when
+  |ρ| > `reveal_correlation_threshold` (default 0.5). Otherwise →
+  `SAFE`. Caller-supplied `hamming_weight_signature` still
+  short-circuits the analyzer for users with their own decision
+  pipeline.
+- New params for `reveal-2023-1128`:
+  `reveal_correlation_threshold`. Evidence carries
+  `analyzer="in_tree_pearson_correlation"`, `n_samples`, `n_models`,
+  `correlation_threshold`, `best_model`, `best_correlation`, and
+  `all_model_scores` with per-model `correlation` + `degenerate`
+  flags (the flag fires when a model has zero variance and Pearson is
+  undefined; analyzer treats those as no signal).
+- Trace-file parser surfaces every malformed input as `ERROR` with a
+  precise diagnostic — invalid JSON, non-object top level, missing
+  `samples`/`model`, mismatched prediction length, non-numeric
+  values, model-not-an-object, out-of-range threshold.
+- `reveal-2023-1128` results now record real `duration_seconds`
+  rather than `0.0`.
+
+### Changed — test infrastructure
+- The catalog no longer contains any `NOT_IMPLEMENTED`-returning
+  attack. A test-only `pending_attack_id` fixture in
+  `tests/conftest.py` registers a synthetic scaffold attack so the
+  runner / CLI's `NOT_IMPLEMENTED` exit-path tests stay exercised
+  end-to-end.
+
 ## [0.1.1] - 2026-04-27
 
 ### Added — `glitchfhe-usenix25` in-tree differential analyzer

@@ -332,7 +332,10 @@ def test_reveal_safe_when_signature_clean(tmp_path: Path):
     assert report.results[0].status is AttackStatus.SAFE
 
 
-def test_reveal_not_implemented_when_signature_not_declared(tmp_path: Path):
+def test_reveal_runs_correlation_analyzer_when_signature_undeclared(tmp_path: Path):
+    # Without ``hamming_weight_signature`` the in-tree correlation analyzer
+    # takes over. Non-JSON trace contents fail to parse and surface as ERROR
+    # — a real status, not the prior ``NOT_IMPLEMENTED`` placeholder.
     trace = tmp_path / "trace.npy"
     trace.write_bytes(b"\x00")
     report = run(
@@ -343,7 +346,7 @@ def test_reveal_not_implemented_when_signature_not_declared(tmp_path: Path):
         },
         attacks=["reveal-2023-1128"],
     )
-    assert report.results[0].status is AttackStatus.NOT_IMPLEMENTED
+    assert report.results[0].status is AttackStatus.ERROR
 
 
 # --- glitchfhe-usenix25 ArtifactCheck body --------------------------------

@@ -794,15 +794,14 @@ def test_cli_run_returns_exit_vulnerable(tmp_path: Path):
     assert rc == EXIT_VULNERABLE
 
 
-def test_cli_run_exit_not_implemented_triggers_warning(capsys, tmp_path: Path):
-    # reveal-2023-1128 returns NOT_IMPLEMENTED when a trace is supplied
-    # but ``hamming_weight_signature`` is not declared. (The glitchfhe
-    # in-tree analyzer now produces a real verdict, so it is no longer a
-    # NOT_IMPLEMENTED vehicle for CLI testing.)
+def test_cli_run_exit_not_implemented_triggers_warning(
+    capsys, tmp_path: Path, pending_attack_id
+):
+    # Every shipped module now produces a real verdict; ``pending_attack_id``
+    # is a test-only synthetic attack that always returns NOT_IMPLEMENTED so
+    # the CLI's ``EXIT_NOT_IMPLEMENTED`` warning path stays exercised.
     params = tmp_path / "p.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
-    trace = tmp_path / "trace.bin"
-    trace.write_text("synthetic capture")
     out = tmp_path / "report.json"
     rc = main(
         [
@@ -812,9 +811,7 @@ def test_cli_run_exit_not_implemented_triggers_warning(capsys, tmp_path: Path):
             "--params",
             str(params),
             "--attacks",
-            "reveal-2023-1128",
-            "--evidence",
-            f"trace={trace}",
+            pending_attack_id,
             "--output-json",
             str(out),
             "--quiet",
