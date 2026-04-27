@@ -73,8 +73,12 @@ def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Pat
 
 
 def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path):
+    # glitchfhe-usenix25 returns NOT_IMPLEMENTED when an evidence fault_log
+    # is present but the in-tree differential analyzer is not bundled.
     params = tmp_path / "params.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
+    fault_log = tmp_path / "fault.log"
+    fault_log.write_text("synthetic fault log")
     out = tmp_path / "report.json"
     rc = main(
         [
@@ -85,6 +89,8 @@ def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path):
             str(params),
             "--attacks",
             "glitchfhe-usenix25",
+            "--evidence",
+            f"fault_log={fault_log}",
             "--output-json",
             str(out),
             "--allow-not-implemented",
@@ -97,6 +103,8 @@ def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path):
 def test_cli_run_min_coverage_fails_low_coverage(tmp_path: Path):
     params = tmp_path / "params.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
+    fault_log = tmp_path / "fault.log"
+    fault_log.write_text("synthetic fault log")
     out = tmp_path / "report.json"
     rc = main(
         [
@@ -107,6 +115,8 @@ def test_cli_run_min_coverage_fails_low_coverage(tmp_path: Path):
             str(params),
             "--attacks",
             "glitchfhe-usenix25",
+            "--evidence",
+            f"fault_log={fault_log}",
             "--output-json",
             str(out),
             "--allow-not-implemented",

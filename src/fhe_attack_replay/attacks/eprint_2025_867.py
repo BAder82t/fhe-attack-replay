@@ -17,15 +17,20 @@ class Eprint2025_867(Attack):
     """Side-channel analysis in homomorphic encryption (RevEAL follow-up).
 
     Reference: IACR ePrint 2025/867 — "Side Channel Analysis in Homomorphic
-    Encryption." A 98%+ accurate single-trace attack against SEAL `guard` and
-    `mul_root` routines on the NTT path.
+    Encryption." A 98%+ accurate single-trace attack against SEAL `guard`
+    and `mul_root` routines on the NTT path.
 
     RiskCheck strategy: probe the evaluator fingerprint reported by the
-    adapter. If the target is SEAL/TenSEAL with a known non-constant NTT
-    variant, report the configuration as vulnerable to the published
-    side-channel class. If the adapter advertises a constant-time decrypt
-    path, report SAFE. Other fingerprints remain NOT_IMPLEMENTED until a
-    live trace distinguisher or adapter-specific evidence lands.
+    adapter. The published exploit was demonstrated on SEAL/TenSEAL, but
+    the same Harvey-butterfly NTT family runs in OpenFHE's ``NativeMath``
+    layer and exposes equivalent guard / mul_root surfaces unless the
+    library is built with constant-time flags. The matcher therefore flags
+    *any* implementation whose fingerprint advertises a Harvey-butterfly
+    NTT and does not advertise constant-time decrypt — users on a hardened
+    build should set ``params["constant_time_decrypt"] = True``.
+
+    Other fingerprints remain NOT_IMPLEMENTED until a live trace
+    distinguisher or adapter-specific evidence lands.
     """
 
     id = "eprint-2025-867"
@@ -59,11 +64,16 @@ class Eprint2025_867(Attack):
                 },
                 message="Target advertises constant-time decrypt; no leak surface for this attack.",
             )
-        if ("seal" in implementation or "tenseal" in implementation) and ntt_variant in {
-            "harvey-butterfly",
-            "guard",
-            "mul_root",
-        }:
+        non_constant_ntts = {"harvey-butterfly", "guard", "mul_root"}
+        seal_family = "seal" in implementation or "tenseal" in implementation
+        openfhe_family = "openfhe" in implementation
+        in_scope = seal_family or openfhe_family
+        if in_scope and ntt_variant in non_constant_ntts:
+            known_surface = (
+                "SEAL NTT guard/mul_root non-constant-time path"
+                if seal_family
+                else "OpenFHE NativeMath Harvey-butterfly NTT (equivalent guard/mul_root surface)"
+            )
             return AttackResult(
                 attack=self.id,
                 library=adapter.name,
@@ -73,14 +83,16 @@ class Eprint2025_867(Attack):
                 evidence={
                     "mode": "risk_check",
                     "evaluator_fingerprint": fp,
-                    "known_surface": "SEAL NTT guard/mul_root non-constant-time path",
+                    "known_surface": known_surface,
                     "citation": self.citation.url if self.citation else "",
                 },
                 message=(
-                    "RiskCheck: target fingerprint matches the SEAL/TenSEAL "
-                    "non-constant NTT surface described by ePrint 2025/867. "
-                    "Use a hardened constant-time build or provide trace "
-                    "evidence before treating this configuration as safe."
+                    "RiskCheck: target fingerprint matches the non-constant "
+                    "Harvey-butterfly NTT surface described by ePrint "
+                    "2025/867. Use a hardened constant-time build (set "
+                    "params['constant_time_decrypt'] = true) or provide "
+                    "trace evidence before treating this configuration as "
+                    "safe."
                 ),
             )
         return AttackResult(

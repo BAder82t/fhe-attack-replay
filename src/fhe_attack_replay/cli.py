@@ -109,6 +109,18 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
             "Checked after status exits such as VULNERABLE/ERROR."
         ),
     )
+    p.add_argument(
+        "--evidence",
+        action="append",
+        default=[],
+        metavar="KEY=PATH",
+        help=(
+            "Pass an evidence file to ArtifactCheck attacks (repeatable). "
+            "Example: --evidence trace=runs/seal-ntt.npy --evidence model=conf.json. "
+            "Files must exist; their paths are surfaced under "
+            "params['evidence_paths'][key]."
+        ),
+    )
 
 
 def _load_params(path: Path | None) -> dict[str, Any]:
@@ -117,6 +129,39 @@ def _load_params(path: Path | None) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"params file not found: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _parse_evidence(specs: list[str]) -> dict[str, Path]:
+    """Parse `--evidence KEY=PATH` flags into a name→path dict.
+
+    Validates that every path exists; missing files are a usage error
+    rather than a runtime ERROR so a typo in CI surfaces immediately.
+    """
+    out: dict[str, Path] = {}
+    for spec in specs:
+        if "=" not in spec:
+            raise ValueError(
+                f"--evidence expects KEY=PATH, got {spec!r}. Example: "
+                "--evidence trace=runs/seal-ntt.npy"
+            )
+        key, _, raw_path = spec.partition("=")
+        key = key.strip()
+        if not key:
+            raise ValueError(
+                f"--evidence key is empty in {spec!r}. Example: "
+                "--evidence trace=runs/seal-ntt.npy"
+            )
+        if key in out:
+            raise ValueError(
+                f"--evidence key {key!r} declared more than once."
+            )
+        path = Path(raw_path.strip()).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(
+                f"--evidence path for {key!r} not found: {path}"
+            )
+        out[key] = path
+    return out
 
 
 def _resolve_attacks(spec: str) -> list[str] | None:
@@ -197,9 +242,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
     try:
         params = _load_params(args.params)
         attacks = _resolve_attacks(args.attacks)
+        evidence_paths = _parse_evidence(getattr(args, "evidence", []) or [])
     except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
+    if evidence_paths:
+        # Surface as POSIX-style strings so JSON serialization round-trips
+        # cleanly. Attacks can reopen via Path(...) when they need the file.
+        existing = dict(params.get("evidence_paths") or {})
+        existing.update({k: str(v) for k, v in evidence_paths.items()})
+        params["evidence_paths"] = existing
     try:
         report = run(library=args.lib, params=params, attacks=attacks, scheme=args.scheme)
     except KeyError as exc:

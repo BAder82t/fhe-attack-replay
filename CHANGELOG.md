@@ -6,6 +6,33 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — attack module promotions
+- **`guo-qian-usenix24` is now an implemented RiskCheck.** Inspects
+  `noise_flooding_strategy` (falling back to `noise_flooding` for
+  cheon-2024-127-style configs) against the published threat model.
+  Average-case-bound flooding (`li-micciancio`, `eprint-2020-1533`, …) is
+  reported `VULNERABLE`; worst-case-bound flooding
+  (`openfhe-noise-flooding-decrypt`, `eprint-2024-424`,
+  `modulus-switching-2025-1627`, `hint-lwe-2025-1618`, …) is reported
+  `SAFE`. CKKS-only.
+- **`eprint-2025-867` now flags OpenFHE.** OpenFHE's evaluator fingerprint
+  declares `ntt_variant: "harvey-butterfly"` (matching the family of
+  guard / mul_root surfaces the paper targets). Builds without
+  `params['constant_time_decrypt'] = true` are reported `VULNERABLE`;
+  hardened builds report `SAFE`.
+- **`reveal-2023-1128` is now an implemented ArtifactCheck.** Reads a
+  user-supplied power/timing trace via `--evidence trace=PATH` and
+  classifies the run based on `params['hamming_weight_signature']` —
+  `recovered` → `VULNERABLE`, `clean` → `SAFE`, omitted → `NOT_IMPLEMENTED`
+  (the in-tree single-trace correlation analyzer is still pending).
+- **`glitchfhe-usenix25` is now an implemented ArtifactCheck.** Reads a
+  user-supplied fault log via `--evidence fault_log=PATH` and classifies
+  the run based on `params['differential_outcome']` — `recovered` →
+  `VULNERABLE`, `resistant` → `SAFE`, omitted → `NOT_IMPLEMENTED`.
+- **CLI `--evidence KEY=PATH`** (repeatable). Validates path existence at
+  parse time; missing keys / paths return `EXIT_USAGE`. Surfaced into
+  `params['evidence_paths'][key]` for ArtifactCheck modules to consume.
+
 ### Fixed
 - `Coverage.implemented` no longer counts `ERROR` results. Only `SAFE` and
   `VULNERABLE` produce real verdicts, so `--min-coverage 1.0` no longer

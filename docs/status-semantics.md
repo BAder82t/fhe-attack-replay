@@ -66,6 +66,31 @@ implemented coverage — an attack that threw is the absence of a verdict, not
 a verdict, so a run that errors out everywhere cannot satisfy
 `--min-coverage`.
 
+## ArtifactCheck evidence files
+
+ArtifactCheck modules (today: `reveal-2023-1128`, `glitchfhe-usenix25`)
+take user-supplied evidence files via the CLI `--evidence KEY=PATH` flag.
+The runner validates that each path exists, then surfaces the dict at
+`params['evidence_paths'][key]` for the attack module to consume.
+
+```bash
+fhe-replay run --lib seal --attacks reveal-2023-1128,glitchfhe-usenix25 \
+    --params examples/bfv-128.json \
+    --evidence trace=runs/seal-ntt.npy \
+    --evidence fault_log=runs/glitch-2026.csv
+```
+
+Per-module contracts:
+
+| Module                | Evidence key | Outcome param                  | Decided by                                       |
+|-----------------------|--------------|---------------------------------|--------------------------------------------------|
+| `reveal-2023-1128`    | `trace`      | `hamming_weight_signature`     | `recovered` → VULNERABLE, `clean` → SAFE         |
+| `glitchfhe-usenix25`  | `fault_log`  | `differential_outcome`          | `recovered` → VULNERABLE, `resistant` → SAFE     |
+
+Without an outcome declaration the modules return `NOT_IMPLEMENTED` — the
+in-tree distinguishers are pending. Use the outcome params to record an
+external analysis result so the harness produces an audit-ready verdict.
+
 ## Replay tuning knobs
 
 The `cheon-2024-127` live replay reads three optional params from the

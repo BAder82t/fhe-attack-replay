@@ -66,9 +66,19 @@ def test_overall_status_skipped_when_only_skips():
     assert report.overall_status is AttackStatus.SKIPPED
 
 
-def test_overall_status_not_implemented_when_any_pending():
-    # glitchfhe-usenix25 is still a citation-bearing scaffold.
-    report = run(library="openfhe", params={"scheme": "BFV"}, attacks=["glitchfhe-usenix25"])
+def test_overall_status_not_implemented_when_any_pending(tmp_path):
+    # glitchfhe-usenix25 returns NOT_IMPLEMENTED when a fault log is
+    # supplied but the differential analyzer is not yet bundled.
+    fault_log = tmp_path / "fault.log"
+    fault_log.write_text("synthetic capture")
+    report = run(
+        library="openfhe",
+        params={
+            "scheme": "BFV",
+            "evidence_paths": {"fault_log": str(fault_log)},
+        },
+        attacks=["glitchfhe-usenix25"],
+    )
     assert report.overall_status is AttackStatus.NOT_IMPLEMENTED
     assert report.coverage.not_implemented == 1
 

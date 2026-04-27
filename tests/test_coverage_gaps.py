@@ -347,12 +347,14 @@ def test_cheon_bisect_boundary_raises_for_unknown_adapter():
 
 
 def test_cheon_run_replay_falls_back_when_inner_raises_not_implemented():
-    """A live-oracle adapter whose name is in the dispatch set but whose
-    primitives raise NotImplementedError mid-run must fall back to
-    RiskCheck rather than ERROR."""
+    """A live-oracle adapter that exposes the polynomial-domain protocol
+    (so `_has_live_dispatch` returns True) but whose primitives raise
+    NotImplementedError mid-run must fall back to RiskCheck rather than
+    ERROR. Triggers the `except NotImplementedError: pass` branch in
+    `Cheon2024_127.run`."""
 
     class _BrokenLiveAdapter(LibraryAdapter):
-        name = "openfhe"  # in dispatch set
+        name = "future-fhe"  # not in the private-dispatch set
         capability = AdapterCapability(
             schemes=("BFV",),
             live_oracle=True,
@@ -366,6 +368,9 @@ def test_cheon_run_replay_falls_back_when_inner_raises_not_implemented():
             return AdapterContext(library=self.name, scheme=scheme, params=params)
 
         def encrypt(self, ctx, plaintext):
+            # Mid-replay the adapter discovers it cannot actually run live
+            # primitives (e.g. native extension missing) — raise the
+            # documented signal so the harness falls back gracefully.
             raise NotImplementedError("no live primitives")
 
         def decrypt(self, ctx, ciphertext):
@@ -374,9 +379,17 @@ def test_cheon_run_replay_falls_back_when_inner_raises_not_implemented():
         def evaluator_fingerprint(self, ctx):
             return {}
 
+        # These two methods drive `_has_live_dispatch` to return True; the
+        # NotImplementedError from `encrypt` is what trips the fallback.
+        def perturb_ciphertext_constant(self, ctx, ct, offset, *, component=0):
+            raise NotImplementedError
+
+        def plaintext_delta(self, ctx, ct):
+            raise NotImplementedError
+
     attack = Cheon2024_127()
     ctx = AdapterContext(
-        library="openfhe",
+        library="future-fhe",
         scheme="BFV",
         params={
             "scheme": "BFV",
@@ -782,8 +795,12 @@ def test_cli_run_returns_exit_vulnerable(tmp_path: Path):
 
 
 def test_cli_run_exit_not_implemented_triggers_warning(capsys, tmp_path: Path):
+    # glitchfhe-usenix25 with a supplied fault log returns NOT_IMPLEMENTED
+    # because the differential analyzer is not yet bundled.
     params = tmp_path / "p.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
+    fault_log = tmp_path / "fault.log"
+    fault_log.write_text("synthetic capture")
     out = tmp_path / "report.json"
     rc = main(
         [
@@ -794,6 +811,8 @@ def test_cli_run_exit_not_implemented_triggers_warning(capsys, tmp_path: Path):
             str(params),
             "--attacks",
             "glitchfhe-usenix25",
+            "--evidence",
+            f"fault_log={fault_log}",
             "--output-json",
             str(out),
             "--quiet",

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from fhe_attack_replay.adapters.base import AdapterContext, LibraryAdapter
@@ -28,21 +29,40 @@ _ORACLE_ADVERSARY_MODELS = frozenset(
 # `openfhe-noise-flooding-decrypt` resolve to the same key.
 _RECOGNIZED_MITIGATIONS = frozenset(
     {
+        # Generic
+        "noise-flooding",
+        "noise-flood",
+        "noise-flooding-decrypt",
+        # OpenFHE native NOISE_FLOODING_DECRYPT execution mode.
         "openfhe-noise-flooding-decrypt",
+        "openfhe-noise-flood",
+        # Li-Micciancio rerandomization (ePrint 2024/424).
         "eprint-2024-424",
+        "li-micciancio-2024",
+        "rerandomization-2024-424",
+        # Cheon-Kim-Park modulus-switching mitigation (ePrint 2025/1627).
         "modulus-switching-2025-1627",
         "eprint-2025-1627",
+        # Hint-LWE based decrypt rerandomization (ePrint 2025/1618).
         "hint-lwe-2025-1618",
         "eprint-2025-1618",
-        "noise-flooding",
+        # SEAL / Lattigo native flooding wrappers (community labels).
+        "seal-noise-flooding",
+        "lattigo-noise-flooding",
+        "tfhe-rs-noise-flooding",
+        # Kim-Kim-Park 2024 differential-privacy decrypt wrapper.
+        "kim-kim-park-2024",
+        "dp-decrypt",
     }
 )
 
-# Adapter names whose bisection wiring this module knows how to drive
-# directly. The set of *capable* adapters is computed dynamically (see
-# AdapterCapability.live_oracle); this constant only marks which adapters
-# the bisect dispatcher in this file can route to today.
-_LIVE_BISECT_DISPATCH = frozenset({"toy-lwe", "openfhe"})
+# Adapter names with module-private bisection wiring that bypasses the
+# generic polynomial-domain protocol (e.g. toy-lwe uses an in-tree helper
+# for speed). Adapters NOT in this set are dispatched via the generic
+# polynomial-bisect path when they expose ``perturb_ciphertext_constant``
+# and ``plaintext_delta``; this lets new adapters plug into Cheon replay
+# without editing this module.
+_PRIVATE_DISPATCH_NAMES = frozenset({"toy-lwe"})
 
 # Default Replay configuration. The bisection rounds and trial count
 # determine the statistical strength of the discriminator.
@@ -126,34 +146,58 @@ class Cheon2024_127(Attack):
     )
 
     def run(self, adapter: LibraryAdapter, ctx: AdapterContext) -> AttackResult:
-        live_capable = (
+        if (
             adapter.capability.live_oracle
             and adapter.supports(ctx.scheme)
-            and adapter.name in _LIVE_BISECT_DISPATCH
+            and self._has_live_dispatch(adapter)
             and adapter.is_available()
-        )
-        if live_capable:
+        ):
             try:
                 return self._run_replay(adapter, ctx)
             except NotImplementedError:
-                # Adapter advertised the name but cannot actually run primitives
-                # (e.g. openfhe-python missing the C++ extension). Fall back.
+                # Adapter advertised the capability but cannot actually run
+                # primitives (e.g. openfhe-python missing the C++ extension,
+                # or a polynomial adapter without the perturb method). Fall
+                # back to the static risk-check.
                 pass
         return self._run_risk_check(adapter, ctx)
+
+    @staticmethod
+    def _has_live_dispatch(adapter: LibraryAdapter) -> bool:
+        """Return True iff this module knows how to drive ``adapter`` live.
+
+        Two routes are recognised:
+
+        - the adapter's name is in :data:`_PRIVATE_DISPATCH_NAMES` (today
+          only ``toy-lwe`` — uses an in-tree fast path);
+        - the adapter exposes the polynomial-domain protocol methods
+          ``perturb_ciphertext_constant`` and ``plaintext_delta``. Any
+          future adapter (SEAL, Lattigo, tfhe-rs, …) plugs into Cheon
+          replay simply by exposing those methods.
+        """
+        if adapter.name in _PRIVATE_DISPATCH_NAMES:
+            return True
+        return hasattr(adapter, "perturb_ciphertext_constant") and hasattr(
+            adapter, "plaintext_delta"
+        )
 
     # --------------------------------------------------------------- replay --
     def _run_replay(self, adapter: LibraryAdapter, ctx: AdapterContext) -> AttackResult:
         import numpy as np  # local import keeps numpy out of import-time critical path
 
+        started = time.monotonic()
         ct_zero = adapter.encrypt(ctx, 0)
         trials = self._replay_trials_for(ctx)
         delta = self._delta_for(adapter, ctx, ct_zero)
         bisect_rounds = self._bisect_rounds_for(ctx, delta)
+        master_seed, trial_seeds = self._derive_trial_seeds(ctx, trials)
+
         # Recover the encryption-noise boundary independently in each trial.
         # Without noise flooding, the boundary is fixed (deterministic decrypt).
         # With noise flooding, the boundary is a random variable.
         boundaries: list[int] = []
-        for _ in range(trials):
+        for trial_seed in trial_seeds:
+            self._seed_trial(ctx, trial_seed)
             boundaries.append(
                 self._bisect_boundary(
                     adapter, ctx, ct_zero, rounds=bisect_rounds, delta=delta
@@ -166,6 +210,7 @@ class Cheon2024_127(Attack):
         variance_frac = self._variance_frac_for(ctx)
         threshold = max(1.0, variance_frac * float(delta))
         deterministic = std_b < threshold
+        duration = time.monotonic() - started
 
         evidence: dict[str, Any] = {
             "mode": "replay",
@@ -179,6 +224,8 @@ class Cheon2024_127(Attack):
             "variance_frac_delta": variance_frac,
             "deterministic_oracle": deterministic,
             "boundaries_sample": [int(b) for b in boundaries],
+            "replay_master_seed": int(master_seed),
+            "replay_trial_seeds": [int(s) for s in trial_seeds],
             "citation": self.citation.url if self.citation else "",
             "reference_poc": "https://github.com/hmchoe0528/INDCPAD_HE_ThresFHE",
             "library": adapter.name,
@@ -188,8 +235,9 @@ class Cheon2024_127(Attack):
                 else "production"
             ),
         }
-        if adapter.name == "openfhe":
-            metadata = adapter.polynomial_replay_metadata(ctx, ct_zero)  # type: ignore[attr-defined]
+        polynomial_meta = getattr(adapter, "polynomial_replay_metadata", None)
+        if polynomial_meta is not None and adapter.name not in _PRIVATE_DISPATCH_NAMES:
+            metadata = polynomial_meta(ctx, ct_zero)
             evidence.update(
                 {
                     "test": "polynomial_domain_bisection",
@@ -206,7 +254,7 @@ class Cheon2024_127(Attack):
                 library=adapter.name,
                 scheme=ctx.scheme,
                 status=AttackStatus.VULNERABLE,
-                duration_seconds=0.0,
+                duration_seconds=duration,
                 evidence=evidence,
                 message=(
                     "Live-oracle replay: bisection recovered the encryption "
@@ -223,7 +271,7 @@ class Cheon2024_127(Attack):
             library=adapter.name,
             scheme=ctx.scheme,
             status=AttackStatus.SAFE,
-            duration_seconds=0.0,
+            duration_seconds=duration,
             evidence=evidence,
             message=(
                 "Live-oracle replay: bisection-recovered noise boundary "
@@ -233,6 +281,52 @@ class Cheon2024_127(Attack):
                 "not converge."
             ),
         )
+
+    @staticmethod
+    def _derive_trial_seeds(
+        ctx: AdapterContext, trials: int
+    ) -> tuple[int, list[int]]:
+        """Derive per-trial seeds from a stable master seed.
+
+        The master seed comes from ``params["replay_seed"]`` if present,
+        else from ``params["seed"]`` (so toy-lwe runs are reproducible
+        even without an explicit replay-side seed), else from
+        :func:`time.time_ns` so unseeded runs are still trial-independent.
+
+        Per-trial seeds are produced by a numpy ``default_rng`` chain so
+        the across-trial variance signal that distinguishes
+        noise-flooded oracles is preserved.
+        """
+        import numpy as np
+
+        raw = ctx.params.get("replay_seed")
+        if raw is None:
+            raw = ctx.params.get("seed")
+        if raw is None:
+            master = int(time.time_ns()) & 0xFFFF_FFFF
+        else:
+            master = int(raw) & 0xFFFF_FFFF
+        gen = np.random.default_rng(master)
+        seeds = [int(gen.integers(0, 2**32)) for _ in range(trials)]
+        return master, seeds
+
+    @staticmethod
+    def _seed_trial(ctx: AdapterContext, trial_seed: int) -> None:
+        """Reseed the adapter's RNG handle if it exposes one.
+
+        Adapters that own a numpy ``Generator`` under ``handles["rng"]``
+        (today: toy-lwe) get reseeded for reproducibility. Adapters
+        without an exposed RNG (today: openfhe — randomness lives inside
+        the C++ library) silently no-op; their per-trial reproducibility
+        is governed by the underlying library's seeding instead.
+        """
+        if not getattr(ctx, "handles", None):
+            return
+        if "rng" not in ctx.handles:
+            return
+        import numpy as np
+
+        ctx.handles["rng"] = np.random.default_rng(int(trial_seed))
 
     def _bisect_boundary(
         self,
@@ -246,14 +340,19 @@ class Cheon2024_127(Attack):
         """Binary-search the smallest positive offset that flips decryption.
 
         Implemented in terms of the adapter's primitives so the same logic
-        works against both the toy-lwe adapter and a real OpenFHE/SEAL build
-        (subject to those adapters exposing a ``perturb`` operation; the
-        toy-lwe adapter exposes it directly via ctx.handles).
+        works against any adapter that either (a) is in
+        :data:`_PRIVATE_DISPATCH_NAMES` with module-private wiring, or
+        (b) exposes the polynomial-domain protocol methods
+        ``perturb_ciphertext_constant`` and ``plaintext_delta``.
         """
         if adapter.name == "toy-lwe":
             return self._bisect_boundary_toy_lwe(ctx, ct_zero, rounds=rounds)
-        if adapter.name == "openfhe":
-            return self._bisect_boundary_openfhe(adapter, ctx, ct_zero, rounds, delta)
+        if hasattr(adapter, "perturb_ciphertext_constant") and hasattr(
+            adapter, "plaintext_delta"
+        ):
+            return self._bisect_boundary_polynomial(
+                adapter, ctx, ct_zero, rounds, delta
+            )
         raise NotImplementedError(
             f"Live-bisect not yet wired for adapter {adapter.name!r}."
         )
@@ -270,7 +369,7 @@ class Cheon2024_127(Attack):
             toy, keys, ct_zero, rng, rounds=rounds
         )
 
-    def _bisect_boundary_openfhe(
+    def _bisect_boundary_polynomial(
         self,
         adapter: LibraryAdapter,
         ctx: AdapterContext,
@@ -278,13 +377,25 @@ class Cheon2024_127(Attack):
         rounds: int,
         delta: int,
     ) -> int:
+        """Generic polynomial-domain bisection.
+
+        Works against any adapter exposing
+        ``perturb_ciphertext_constant(ctx, ct, offset, *, component=0)`` and
+        ``decrypt(ctx, ct)``. The OpenFHE path is the canonical user but
+        SEAL / Lattigo / tfhe-rs adapters can plug in by exposing the same
+        protocol methods.
+        """
         perturb = getattr(adapter, "perturb_ciphertext_constant", None)
         if perturb is None:
-            raise NotImplementedError("OpenFHE adapter lacks ciphertext perturbation.")
+            raise NotImplementedError(
+                f"adapter {adapter.name!r} lacks ciphertext perturbation."
+            )
 
         baseline = tuple(list(adapter.decrypt(ctx, ct_zero))[:8])
         if not baseline:
-            raise NotImplementedError("OpenFHE replay requires packed decrypt output.")
+            raise NotImplementedError(
+                f"adapter {adapter.name!r} replay requires packed decrypt output."
+            )
 
         def flips(offset: int) -> bool:
             perturbed = perturb(ctx, ct_zero, offset, component=0)
@@ -303,10 +414,10 @@ class Cheon2024_127(Attack):
             # RuntimeError so the harness reports ERROR with traceback rather
             # than NOT_IMPLEMENTED, which would be misleading.
             raise RuntimeError(
-                "OpenFHE polynomial perturbation did not cross the decrypt "
-                f"boundary within 8 doublings of delta={int(delta)}; the "
-                "configured ciphertext modulus or noise level may be outside "
-                "the bisection module's supported range."
+                f"{adapter.name} polynomial perturbation did not cross the "
+                f"decrypt boundary within 8 doublings of delta={int(delta)}; "
+                "the configured ciphertext modulus or noise level may be "
+                "outside the bisection module's supported range."
             )
 
         for _ in range(rounds):
@@ -316,6 +427,10 @@ class Cheon2024_127(Attack):
             else:
                 low = mid
         return high
+
+    # Backwards-compatible alias preserved for tests in ``test_coverage_gaps``
+    # that call the helper by its OpenFHE-flavoured name.
+    _bisect_boundary_openfhe = _bisect_boundary_polynomial
 
     def _delta_for(
         self, adapter: LibraryAdapter, ctx: AdapterContext, ct_zero: Any
@@ -364,6 +479,7 @@ class Cheon2024_127(Attack):
     def _run_risk_check(
         self, adapter: LibraryAdapter, ctx: AdapterContext
     ) -> AttackResult:
+        started = time.monotonic()
         params = ctx.params
         adversary_model = _normalize(params.get("adversary_model"))
         decryption_oracle = params.get("decryption_oracle")
@@ -388,6 +504,7 @@ class Cheon2024_127(Attack):
             "citation": self.citation.url if self.citation else "",
             "reference_poc": "https://github.com/hmchoe0528/INDCPAD_HE_ThresFHE",
         }
+        duration = time.monotonic() - started
 
         if not oracle_access:
             return AttackResult(
@@ -395,7 +512,7 @@ class Cheon2024_127(Attack):
                 library=adapter.name,
                 scheme=ctx.scheme,
                 status=AttackStatus.SKIPPED,
-                duration_seconds=0.0,
+                duration_seconds=duration,
                 evidence=evidence,
                 message=(
                     "No decryption-oracle exposure declared (adversary_model "
@@ -411,7 +528,7 @@ class Cheon2024_127(Attack):
                 library=adapter.name,
                 scheme=ctx.scheme,
                 status=AttackStatus.SAFE,
-                duration_seconds=0.0,
+                duration_seconds=duration,
                 evidence=evidence,
                 message=(
                     f"Recognized mitigation declared: noise_flooding="
@@ -425,7 +542,7 @@ class Cheon2024_127(Attack):
             library=adapter.name,
             scheme=ctx.scheme,
             status=AttackStatus.VULNERABLE,
-            duration_seconds=0.0,
+            duration_seconds=duration,
             evidence=evidence,
             message=(
                 "Decryption-oracle exposure declared and no recognized "

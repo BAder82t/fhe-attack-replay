@@ -115,10 +115,10 @@ fhe-replay run --lib openfhe --params examples/bfv-128.json \
 | ID                    | Source                                             | Intent             | Status     |
 |-----------------------|----------------------------------------------------|--------------------|------------|
 | `cheon-2024-127`      | Cheon, Hong, Kim — IACR ePrint 2024/127            | Replay + RiskCheck | implemented (Replay against toy-lwe and OpenFHE BFV/BGV; RiskCheck elsewhere) |
-| `eprint-2025-867`     | Side-Channel Analysis in HE — IACR ePrint 2025/867 | RiskCheck          | partial (SEAL/TenSEAL fingerprint verdicts) |
-| `reveal-2023-1128`    | Aydin, Karabulut et al. — IACR ePrint 2023/1128    | ArtifactCheck      | scaffold   |
-| `guo-qian-usenix24`   | Guo et al. — USENIX Security 2024                  | RiskCheck          | scaffold   |
-| `glitchfhe-usenix25`  | Mankali et al. — USENIX Security 2025              | ArtifactCheck      | scaffold   |
+| `eprint-2025-867`     | Side-Channel Analysis in HE — IACR ePrint 2025/867 | RiskCheck          | implemented (SEAL/TenSEAL and OpenFHE Harvey-butterfly fingerprint verdicts) |
+| `reveal-2023-1128`    | Aydin, Karabulut et al. — IACR ePrint 2023/1128    | ArtifactCheck      | implemented (records caller-supplied trace verdict; in-tree analyzer pending) |
+| `guo-qian-usenix24`   | Guo et al. — USENIX Security 2024                  | RiskCheck          | implemented (average-case vs worst-case noise-flooding decision rule) |
+| `glitchfhe-usenix25`  | Mankali et al. — USENIX Security 2025              | ArtifactCheck      | implemented (records caller-supplied fault-log verdict; in-tree analyzer pending) |
 
 ### `cheon-2024-127` — IND-CPA-D Replay (live oracle)
 
@@ -152,6 +152,40 @@ ciphertext directly: it adds a constant polynomial to ciphertext component
 native decrypt oracle. Replay evidence records
 `test=polynomial_domain_bisection`, `serialization_backend=openfhe-json`, the
 plaintext modulus, and DCRT tower metadata.
+
+### `guo-qian-usenix24` — Non-worst-case noise-flooding RiskCheck (CKKS)
+
+Inspects `noise_flooding_strategy` (or `noise_flooding`) against the
+Guo-Qian USENIX'24 threat model. Average-case-bound flooding constructions
+(`li-micciancio`, `eprint-2020-1533`, …) are reported `VULNERABLE`;
+worst-case-bound constructions (`openfhe-noise-flooding-decrypt`,
+`eprint-2024-424`, `modulus-switching-2025-1627`, …) report `SAFE`. Configs
+without an oracle exposure or without a recognized flooding label are
+`SKIPPED`.
+
+```bash
+fhe-replay run --lib seal --attacks guo-qian-usenix24 \
+    --params /dev/stdin <<'JSON'
+{"scheme":"CKKS","adversary_model":"ind-cpa-d","noise_flooding_strategy":"li-micciancio"}
+JSON
+```
+
+### `reveal-2023-1128` / `glitchfhe-usenix25` — ArtifactCheck
+
+Both modules consume user-supplied evidence files via the CLI
+`--evidence KEY=PATH` flag and record the analyst's declared outcome:
+
+```bash
+fhe-replay run --lib seal --attacks reveal-2023-1128 \
+    --params examples/bfv-128.json \
+    --evidence trace=runs/seal-ntt.npy
+```
+
+Set `params['hamming_weight_signature'] = 'recovered'` (or `'clean'`) to
+record the result of an external single-trace correlation analysis;
+`glitchfhe-usenix25` reads `params['differential_outcome']` similarly.
+Without an outcome declaration the verdict is `NOT_IMPLEMENTED` —
+the in-tree distinguishers are pending.
 
 ### `cheon-2024-127` — IND-CPA-D RiskCheck (static, all libs)
 

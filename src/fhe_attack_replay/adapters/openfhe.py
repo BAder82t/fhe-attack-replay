@@ -334,11 +334,15 @@ class OpenFHEAdapter(LibraryAdapter):
         cc = ctx.handles.get("cc") if ctx.handles else None
         return {
             "implementation": "openfheorg/openfhe-development via openfhe-python",
+            # OpenFHE ships a Harvey-butterfly NTT in its NativeMath layer.
+            # The same family of guard / mul_root surfaces that ePrint
+            # 2025/867 targets in SEAL exists here; whether the deployed
+            # build is constant-time depends on the C++ build flags. Users
+            # on a hardened branch should override `constant_time_decrypt`
+            # via params.
+            "ntt_variant": "harvey-butterfly",
             "ring_dimension": int(cc.GetRingDimension()) if cc else None,
             "scheme": ctx.scheme,
-            # OpenFHE relies on the C++ compiler for constant-time decrypt;
-            # users who build against a hardened OpenFHE branch should
-            # override this in their params.
             "constant_time_decrypt": bool(
                 ctx.params.get("constant_time_decrypt", False)
             ),
