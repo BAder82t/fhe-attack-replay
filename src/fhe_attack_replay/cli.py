@@ -101,6 +101,15 @@ def _add_run_args(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Treat all-SKIPPED runs as success (exit 0). Off by default.",
     )
+    p.add_argument(
+        "--min-coverage",
+        type=float,
+        default=None,
+        help=(
+            "Require coverage.ratio to be at least this value (0.0-1.0). "
+            "Checked after status exits such as VULNERABLE/ERROR."
+        ),
+    )
 
 
 def _load_params(path: Path | None) -> dict[str, Any]:
@@ -195,6 +204,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
         allow_not_implemented=args.allow_not_implemented,
         allow_skipped=args.allow_skipped,
     )
+    if (
+        rc == EXIT_OK
+        and args.min_coverage is not None
+        and report.coverage.ratio < args.min_coverage
+    ):
+        print(
+            f"warning: implemented coverage {report.coverage.ratio:.4f} is below "
+            f"--min-coverage {args.min_coverage:.4f}.",
+            file=sys.stderr,
+        )
+        return EXIT_NOT_IMPLEMENTED
     if rc == EXIT_NOT_IMPLEMENTED:
         print(
             f"warning: {report.coverage.not_implemented}/{report.coverage.requested} "

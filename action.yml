@@ -7,7 +7,7 @@ branding:
 
 inputs:
   library:
-    description: "Target FHE library: openfhe | seal | lattigo | tfhe-rs."
+    description: "Target FHE library: toy-lwe | openfhe | seal | lattigo | tfhe-rs."
     required: true
   params:
     description: "Path to params JSON file."

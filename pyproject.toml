@@ -32,7 +32,9 @@ dependencies = [
 
 [project.optional-dependencies]
 openfhe = []
-seal = []
+seal = [
+    "tenseal>=0.3.14",
+]
 lattigo = []
 tfhe-rs = []
 dev = [
@@ -61,8 +63,16 @@ packages = ["src/fhe_attack_replay"]
 include = [
     "src/fhe_attack_replay",
     "tests",
+    "docs",
     "examples",
+    "action.yml",
+    "action",
+    ".github",
     "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "DISCLAIMER.md",
+    "SECURITY.md",
     "LICENSE",
     "NOTICE",
 ]

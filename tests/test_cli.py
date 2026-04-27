@@ -93,6 +93,61 @@ def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path):
     assert rc == EXIT_OK
 
 
+def test_cli_run_min_coverage_fails_low_coverage(tmp_path: Path):
+    params = tmp_path / "params.json"
+    params.write_text(json.dumps({"scheme": "BFV"}))
+    out = tmp_path / "report.json"
+    rc = main(
+        [
+            "run",
+            "--lib",
+            "openfhe",
+            "--params",
+            str(params),
+            "--attacks",
+            "glitchfhe-usenix25",
+            "--output-json",
+            str(out),
+            "--allow-not-implemented",
+            "--min-coverage",
+            "1.0",
+            "--quiet",
+        ]
+    )
+    assert rc == EXIT_NOT_IMPLEMENTED
+
+
+def test_cli_run_min_coverage_accepts_full_coverage(tmp_path: Path):
+    params = tmp_path / "params.json"
+    params.write_text(
+        json.dumps(
+            {
+                "scheme": "BFV",
+                "adversary_model": "ind-cpa-d",
+                "noise_flooding": "noise-flooding",
+            }
+        )
+    )
+    out = tmp_path / "report.json"
+    rc = main(
+        [
+            "run",
+            "--lib",
+            "openfhe",
+            "--params",
+            str(params),
+            "--attacks",
+            "cheon-2024-127",
+            "--output-json",
+            str(out),
+            "--min-coverage",
+            "1.0",
+            "--quiet",
+        ]
+    )
+    assert rc == EXIT_OK
+
+
 def test_cli_run_only_skipped_returns_5(tmp_path: Path):
     # GuoQian is CKKS-only; running it with BFV makes the run all-skipped.
     params = tmp_path / "params.json"
