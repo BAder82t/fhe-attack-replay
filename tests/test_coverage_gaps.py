@@ -795,12 +795,14 @@ def test_cli_run_returns_exit_vulnerable(tmp_path: Path):
 
 
 def test_cli_run_exit_not_implemented_triggers_warning(capsys, tmp_path: Path):
-    # glitchfhe-usenix25 with a supplied fault log returns NOT_IMPLEMENTED
-    # because the differential analyzer is not yet bundled.
+    # reveal-2023-1128 returns NOT_IMPLEMENTED when a trace is supplied
+    # but ``hamming_weight_signature`` is not declared. (The glitchfhe
+    # in-tree analyzer now produces a real verdict, so it is no longer a
+    # NOT_IMPLEMENTED vehicle for CLI testing.)
     params = tmp_path / "p.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
-    fault_log = tmp_path / "fault.log"
-    fault_log.write_text("synthetic capture")
+    trace = tmp_path / "trace.bin"
+    trace.write_text("synthetic capture")
     out = tmp_path / "report.json"
     rc = main(
         [
@@ -810,9 +812,9 @@ def test_cli_run_exit_not_implemented_triggers_warning(capsys, tmp_path: Path):
             "--params",
             str(params),
             "--attacks",
-            "glitchfhe-usenix25",
+            "reveal-2023-1128",
             "--evidence",
-            f"fault_log={fault_log}",
+            f"trace={trace}",
             "--output-json",
             str(out),
             "--quiet",

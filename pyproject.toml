@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fhe-attack-replay"
-version = "0.1.0"
+version = "0.1.1"
 description = "Unified attack-replay regression harness for FHE libraries (SEAL, OpenFHE, Lattigo, tfhe-rs)."
 readme = "README.md"
 requires-python = ">=3.11"

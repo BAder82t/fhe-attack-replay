@@ -6,6 +6,68 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-04-27
+
+### Added — `glitchfhe-usenix25` in-tree differential analyzer
+- **`glitchfhe-usenix25` now ships an in-tree differential analyzer**
+  that replaces the prior `NOT_IMPLEMENTED` placeholder. Pass a fault
+  log via `--evidence fault_log=PATH` (JSON array or JSONL, comments
+  with `#` allowed in JSONL) where each record carries `expected` and
+  `observed` integer arrays. The analyzer computes the **effective
+  fault rate** (records with any expected/observed mismatch) and the
+  **mean Hamming distance per effective fault**. A high effective rate
+  (≥ `glitchfhe_min_effective_fault_rate`, default 0.05) combined with
+  low Hamming distance per fault (≤ `glitchfhe_max_mean_hd`, default
+  4.0) matches the GlitchFHE USENIX'25 signature → `VULNERABLE`.
+  Otherwise → `SAFE`. Caller-supplied `differential_outcome` still
+  short-circuits the analyzer for users with their own decision pipeline.
+- New params for `glitchfhe-usenix25`:
+  `glitchfhe_min_effective_fault_rate`, `glitchfhe_max_mean_hd`.
+  Evidence carries `analyzer="in_tree_differential"`,
+  `total_records`, `effective_faults`, `effective_fault_rate`,
+  `total_hd`, `mean_hd_per_effective_fault`, plus a 32-record
+  `per_record_sample` (with `per_record_truncated` flag for large logs).
+- Fault-log parser auto-detects format from the first non-whitespace
+  character (`[` → JSON array, otherwise JSONL); malformed records,
+  missing `expected`/`observed` fields, and out-of-range thresholds
+  surface as `ERROR` with a precise diagnostic line number.
+- `glitchfhe-usenix25` results now record real `duration_seconds`
+  rather than `0.0`.
+
+### Added — `eprint-2025-867` live timing distinguisher
+- **`eprint-2025-867` now runs as a live-oracle Replay against any
+  adapter that advertises `live_oracle=True` and a non-constant-time
+  Harvey-butterfly NTT fingerprint (today: OpenFHE BFV/BGV/CKKS).** The
+  module times `adapter.decrypt` across two contrasting plaintext
+  stimuli (default `[0,…]` vs `[1,…]`), repeats `replay_timing_repeats`
+  times (default 64), and compares per-stimulus mean times. A
+  coefficient-of-variation above `safe_timing_cv_threshold` (default
+  5%) flags the decrypt path as data-dependent → `VULNERABLE`.
+  Replay evidence carries `mode=replay`, `intent_actual=replay`,
+  `test=decrypt_timing_distinguisher`, `cv_observed`, `cv_threshold`,
+  `per_stimulus_mean_seconds`, `per_stimulus_stdev_seconds`, and
+  `leakage_detected`. Falls back to the existing fingerprint
+  risk-check on `NotImplementedError` from the adapter.
+- New params for `eprint-2025-867`:
+  `replay_timing_repeats`, `replay_timing_stimuli`,
+  `safe_timing_cv_threshold`, `replay_seed`, and
+  `disable_live_replay` (force the conservative fingerprint risk-check
+  in CI environments where wall-clock measurements are too noisy).
+- `cheon-2024-127` and `eprint-2025-867` results now record real
+  `duration_seconds` from `time.monotonic()` rather than `0.0`.
+- `cheon-2024-127` accepts `replay_seed` for per-trial reproducibility;
+  trial seeds are derived from the master seed and recorded in evidence
+  as `replay_master_seed` + `replay_trial_seeds`.
+- `cheon-2024-127` mitigation aliases expanded:
+  `kim-kim-park-2024`, `dp-decrypt`, `seal-noise-flooding`,
+  `lattigo-noise-flooding`, `tfhe-rs-noise-flooding`,
+  `li-micciancio-2024`, `rerandomization-2024-424`,
+  `openfhe-noise-flood`, `noise-flood`, `noise-flooding-decrypt`.
+- `cheon-2024-127` live-oracle dispatch is now capability-driven:
+  any adapter exposing `perturb_ciphertext_constant` +
+  `plaintext_delta` is routed through the generic polynomial-bisect
+  path (was a hard-coded `{toy-lwe, openfhe}` allow-list).
+
 ## [0.1.0] - 2026-04-27
 
 ### Added — attack module promotions

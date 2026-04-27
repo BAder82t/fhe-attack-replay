@@ -73,12 +73,14 @@ def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Pat
 
 
 def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path):
-    # glitchfhe-usenix25 returns NOT_IMPLEMENTED when an evidence fault_log
-    # is present but the in-tree differential analyzer is not bundled.
+    # reveal-2023-1128 returns NOT_IMPLEMENTED when a trace evidence path
+    # is present but ``hamming_weight_signature`` is not declared. (The
+    # glitchfhe analyzer now produces a real verdict so it is no longer
+    # the right vehicle for exercising the NOT_IMPLEMENTED CLI path.)
     params = tmp_path / "params.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
-    fault_log = tmp_path / "fault.log"
-    fault_log.write_text("synthetic fault log")
+    trace = tmp_path / "trace.bin"
+    trace.write_text("synthetic trace bytes")
     out = tmp_path / "report.json"
     rc = main(
         [
@@ -88,9 +90,9 @@ def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path):
             "--params",
             str(params),
             "--attacks",
-            "glitchfhe-usenix25",
+            "reveal-2023-1128",
             "--evidence",
-            f"fault_log={fault_log}",
+            f"trace={trace}",
             "--output-json",
             str(out),
             "--allow-not-implemented",
@@ -103,8 +105,8 @@ def test_cli_run_allow_not_implemented_returns_ok(tmp_path: Path):
 def test_cli_run_min_coverage_fails_low_coverage(tmp_path: Path):
     params = tmp_path / "params.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
-    fault_log = tmp_path / "fault.log"
-    fault_log.write_text("synthetic fault log")
+    trace = tmp_path / "trace.bin"
+    trace.write_text("synthetic trace bytes")
     out = tmp_path / "report.json"
     rc = main(
         [
@@ -114,9 +116,9 @@ def test_cli_run_min_coverage_fails_low_coverage(tmp_path: Path):
             "--params",
             str(params),
             "--attacks",
-            "glitchfhe-usenix25",
+            "reveal-2023-1128",
             "--evidence",
-            f"fault_log={fault_log}",
+            f"trace={trace}",
             "--output-json",
             str(out),
             "--allow-not-implemented",

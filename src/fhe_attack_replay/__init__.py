@@ -15,7 +15,7 @@ from fhe_attack_replay.registry import (
 )
 from fhe_attack_replay.runner import Coverage, RunReport, run
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "Attack",

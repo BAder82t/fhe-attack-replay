@@ -67,17 +67,18 @@ def test_overall_status_skipped_when_only_skips():
 
 
 def test_overall_status_not_implemented_when_any_pending(tmp_path):
-    # glitchfhe-usenix25 returns NOT_IMPLEMENTED when a fault log is
-    # supplied but the differential analyzer is not yet bundled.
-    fault_log = tmp_path / "fault.log"
-    fault_log.write_text("synthetic capture")
+    # reveal-2023-1128 returns NOT_IMPLEMENTED when a trace path is supplied
+    # but ``hamming_weight_signature`` is not declared (the in-tree
+    # single-trace correlation analyzer is still pending).
+    trace = tmp_path / "trace.bin"
+    trace.write_bytes(b"\x00\x01" * 256)
     report = run(
-        library="openfhe",
+        library="seal",
         params={
             "scheme": "BFV",
-            "evidence_paths": {"fault_log": str(fault_log)},
+            "evidence_paths": {"trace": str(trace)},
         },
-        attacks=["glitchfhe-usenix25"],
+        attacks=["reveal-2023-1128"],
     )
     assert report.overall_status is AttackStatus.NOT_IMPLEMENTED
     assert report.coverage.not_implemented == 1
