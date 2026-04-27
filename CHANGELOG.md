@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-27
+
 ### Added — attack module promotions
 - **`guo-qian-usenix24` is now an implemented RiskCheck.** Inspects
   `noise_flooding_strategy` (falling back to `noise_flooding` for
