@@ -118,7 +118,7 @@ fhe-replay run --lib openfhe --params examples/bfv-128.json \
 | ID                    | Source                                             | Intent             | Status     |
 |-----------------------|----------------------------------------------------|--------------------|------------|
 | `cheon-2024-127`      | Cheon, Hong, Kim — IACR ePrint 2024/127            | Replay + RiskCheck | implemented (Replay against toy-lwe and OpenFHE BFV/BGV; RiskCheck elsewhere) |
-| `eprint-2025-867`     | Side-Channel Analysis in HE — IACR ePrint 2025/867 | Replay + RiskCheck | implemented (live decrypt-timing distinguisher on live-oracle adapters; SEAL/OpenFHE Harvey-butterfly fingerprint verdicts elsewhere) |
+| `eprint-2025-867`     | Side-Channel Analysis in HE — IACR ePrint 2025/867 | Replay + RiskCheck + ArtifactCheck | implemented (in-tree Pearson-correlation analyzer over user-supplied traces; live decrypt-timing distinguisher on live-oracle adapters; SEAL/OpenFHE Harvey-butterfly fingerprint verdicts elsewhere) |
 | `reveal-2023-1128`    | Aydin, Karabulut et al. — IACR ePrint 2023/1128    | ArtifactCheck      | implemented (in-tree Pearson-correlation analyzer over user-supplied JSON traces) |
 | `guo-qian-usenix24`   | Guo et al. — USENIX Security 2024                  | RiskCheck          | implemented (average-case vs worst-case noise-flooding decision rule) |
 | `glitchfhe-usenix25`  | Mankali et al. — USENIX Security 2025              | ArtifactCheck      | implemented (in-tree differential analyzer over user-supplied JSON/JSONL fault logs) |

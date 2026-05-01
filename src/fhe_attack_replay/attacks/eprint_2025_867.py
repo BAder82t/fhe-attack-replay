@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import json
 import statistics
 import time
+from pathlib import Path
 from typing import Any
 
 from fhe_attack_replay.adapters.base import AdapterContext, LibraryAdapter
+from fhe_attack_replay.attacks._correlation import analyze_models, parse_trace_file
 from fhe_attack_replay.attacks.base import (
     Attack,
     AttackIntent,
@@ -37,6 +40,12 @@ _DEFAULT_TIMING_STIMULI = (
 # 5% of the slower group's mean is a conservative floor that stays above
 # the per-call jitter floor of even slow CI runners (≈1µs).
 _DEFAULT_TIMING_CV_THRESHOLD = 0.05
+
+# Pearson |ρ| above which the ArtifactCheck analyzer concludes the
+# trace leaks the modelled NTT-tap intermediate. Same conservative
+# floor as reveal-2023-1128; the published 2025/867 paper reports
+# correlations well above 0.7 on FPGA / Cortex-M targets.
+_DEFAULT_ARTIFACT_CORR_THRESHOLD = 0.5
 
 
 class Eprint2025_867(Attack):
@@ -126,6 +135,14 @@ class Eprint2025_867(Attack):
     )
 
     def run(self, adapter: LibraryAdapter, ctx: AdapterContext) -> AttackResult:
+        # ArtifactCheck path takes precedence: when the analyst supplies
+        # a power/EM trace, that's stronger evidence than the live
+        # software-timing distinguisher (which is only an analog of the
+        # published power/EM attacks). The analyzer body is the shared
+        # Pearson |ρ| from `attacks._correlation`, same as reveal.
+        if self._artifact_path_available(ctx):
+            return self._run_artifact_check(adapter, ctx)
+
         fp = adapter.evaluator_fingerprint(ctx)
         constant_time = bool(fp.get("constant_time_decrypt", False))
         implementation = str(fp.get("implementation", "")).lower()
@@ -396,3 +413,201 @@ class Eprint2025_867(Attack):
             "first": stim[0] if length else None,
             "last": stim[-1] if length else None,
         }
+
+    # ---------------------------------------------------- artifact check --
+    @staticmethod
+    def _artifact_path_available(ctx: AdapterContext) -> bool:
+        """True iff a `--evidence trace=PATH` was supplied for this run."""
+        evidence_paths = ctx.params.get("evidence_paths") or {}
+        return bool(evidence_paths.get("trace"))
+
+    def _run_artifact_check(
+        self, adapter: LibraryAdapter, ctx: AdapterContext
+    ) -> AttackResult:
+        """Pearson |ρ| analyzer over a user-supplied power/EM trace.
+
+        The published 2025/867 attack is a power / EM single-trace
+        attack against SEAL/OpenFHE NTT guard / mul_root surfaces.
+        When the analyst captures such a trace externally and supplies
+        the leakage-model intermediates as ``predictions`` arrays, this
+        method runs the same Pearson |ρ| discriminator that
+        ``reveal-2023-1128`` uses (shared via ``attacks._correlation``).
+
+        Trace schema is identical to reveal-2023-1128:
+
+            {
+              "samples": [float, ...],
+              "model": [{"label": "...", "predictions": [float, ...]}, ...]
+            }
+
+        Verdict logic:
+
+            max |ρ| > correlation_threshold  → VULNERABLE
+            max |ρ| ≤ correlation_threshold  → SAFE
+        """
+        started = time.monotonic()
+        evidence_paths = ctx.params.get("evidence_paths") or {}
+        trace_path_raw = evidence_paths["trace"]
+        signature = (
+            str(ctx.params.get("ntt_leakage_signature") or "").strip().lower()
+        )
+
+        common_evidence: dict[str, Any] = {
+            "mode": "artifact_check",
+            "intent_actual": AttackIntent.ARTIFACT_CHECK.value,
+            "evidence_paths": {k: str(v) for k, v in evidence_paths.items()},
+            "trace_source": "user-supplied via --evidence trace=PATH",
+            "citation": self.citation.url if self.citation else "",
+        }
+
+        trace_path = Path(str(trace_path_raw)).expanduser()
+        if not trace_path.exists():
+            return AttackResult(
+                attack=self.id,
+                library=adapter.name,
+                scheme=ctx.scheme,
+                status=AttackStatus.ERROR,
+                duration_seconds=time.monotonic() - started,
+                evidence={**common_evidence, "trace_path": str(trace_path)},
+                message=f"Trace file not found at {trace_path!s}.",
+            )
+        size_bytes = trace_path.stat().st_size
+        common_evidence.update(
+            {"trace_path": str(trace_path), "trace_size_bytes": size_bytes}
+        )
+        if size_bytes == 0:
+            return AttackResult(
+                attack=self.id,
+                library=adapter.name,
+                scheme=ctx.scheme,
+                status=AttackStatus.ERROR,
+                duration_seconds=time.monotonic() - started,
+                evidence=common_evidence,
+                message=f"Trace file at {trace_path!s} is empty.",
+            )
+
+        # Caller-supplied signature short-circuits the analyzer for
+        # users with their own external pipeline (matches reveal's
+        # `hamming_weight_signature` semantics).
+        if signature == "recovered":
+            return AttackResult(
+                attack=self.id,
+                library=adapter.name,
+                scheme=ctx.scheme,
+                status=AttackStatus.VULNERABLE,
+                duration_seconds=time.monotonic() - started,
+                evidence={**common_evidence, "ntt_leakage_signature": "recovered"},
+                message=(
+                    "ArtifactCheck: caller declares the supplied trace "
+                    "exhibits the ePrint 2025/867 NTT guard/mul_root "
+                    "leakage signature. Treat the SEAL/OpenFHE build as "
+                    "vulnerable until a constant-time NTT replacement "
+                    "lands."
+                ),
+            )
+        if signature == "clean":
+            return AttackResult(
+                attack=self.id,
+                library=adapter.name,
+                scheme=ctx.scheme,
+                status=AttackStatus.SAFE,
+                duration_seconds=time.monotonic() - started,
+                evidence={**common_evidence, "ntt_leakage_signature": "clean"},
+                message=(
+                    "ArtifactCheck: caller declares the supplied trace does "
+                    "not exhibit the ePrint 2025/867 NTT leakage. Verdict "
+                    "is only as strong as the user-side analysis."
+                ),
+            )
+
+        try:
+            samples, models = parse_trace_file(trace_path)
+        except (ValueError, json.JSONDecodeError) as exc:
+            return AttackResult(
+                attack=self.id,
+                library=adapter.name,
+                scheme=ctx.scheme,
+                status=AttackStatus.ERROR,
+                duration_seconds=time.monotonic() - started,
+                evidence=common_evidence,
+                message=f"Failed to parse trace {trace_path!s}: {exc}",
+            )
+
+        try:
+            threshold = self._artifact_threshold(ctx)
+        except ValueError as exc:
+            return AttackResult(
+                attack=self.id,
+                library=adapter.name,
+                scheme=ctx.scheme,
+                status=AttackStatus.ERROR,
+                duration_seconds=time.monotonic() - started,
+                evidence=common_evidence,
+                message=str(exc),
+            )
+
+        scores = analyze_models(samples, models)
+        ranked = sorted(scores, key=lambda s: abs(s["correlation"]), reverse=True)
+        best = ranked[0]
+        leakage_detected = abs(best["correlation"]) > threshold
+        analyzer_evidence = {
+            **common_evidence,
+            "analyzer": "in_tree_pearson_correlation",
+            "n_samples": len(samples),
+            "n_models": len(models),
+            "correlation_threshold": threshold,
+            "best_model": best["label"],
+            "best_correlation": best["correlation"],
+            "all_model_scores": scores,
+        }
+
+        if leakage_detected:
+            return AttackResult(
+                attack=self.id,
+                library=adapter.name,
+                scheme=ctx.scheme,
+                status=AttackStatus.VULNERABLE,
+                duration_seconds=time.monotonic() - started,
+                evidence=analyzer_evidence,
+                message=(
+                    "ArtifactCheck Pearson |ρ| analyzer: best model "
+                    f"{best['label']!r} matched the trace with "
+                    f"|ρ|={abs(best['correlation']):.3f} (> "
+                    f"{threshold:.3f} threshold). Trace exhibits the "
+                    "ePrint 2025/867 NTT-tap leakage signature; treat the "
+                    "SEAL/OpenFHE build as vulnerable until a "
+                    "constant-time NTT replacement lands."
+                ),
+            )
+
+        return AttackResult(
+            attack=self.id,
+            library=adapter.name,
+            scheme=ctx.scheme,
+            status=AttackStatus.SAFE,
+            duration_seconds=time.monotonic() - started,
+            evidence=analyzer_evidence,
+            message=(
+                "ArtifactCheck Pearson |ρ| analyzer: best model "
+                f"{best['label']!r} achieved |ρ|="
+                f"{abs(best['correlation']):.3f} (≤ {threshold:.3f} "
+                "threshold). No exploitable single-trace leakage "
+                "observed for the supplied models. Tune "
+                "``eprint_867_correlation_threshold`` if the target is "
+                "known to leak more weakly."
+            ),
+        )
+
+    @staticmethod
+    def _artifact_threshold(ctx: AdapterContext) -> float:
+        threshold = float(
+            ctx.params.get(
+                "eprint_867_correlation_threshold", _DEFAULT_ARTIFACT_CORR_THRESHOLD
+            )
+        )
+        if not 0.0 < threshold <= 1.0:
+            raise ValueError(
+                "eprint_867_correlation_threshold must be in (0, 1]; got "
+                f"{threshold!r}."
+            )
+        return threshold

@@ -4,12 +4,18 @@
 from __future__ import annotations
 
 import json
-import math
 import time
 from pathlib import Path
 from typing import Any
 
 from fhe_attack_replay.adapters.base import AdapterContext, LibraryAdapter
+from fhe_attack_replay.attacks._correlation import (
+    analyze_models,
+    parse_trace_file,
+)
+from fhe_attack_replay.attacks._correlation import (
+    pearson_correlation as _pearson_correlation,
+)
 from fhe_attack_replay.attacks.base import (
     Attack,
     AttackIntent,
@@ -17,6 +23,10 @@ from fhe_attack_replay.attacks.base import (
     AttackStatus,
     Citation,
 )
+
+# Re-export under the test-suite-stable name. ``test_reveal_analyzer.py``
+# imports ``_pearson_correlation`` from this module.
+__all__ = ["RevEAL_2023_1128", "_pearson_correlation"]
 
 # Default Pearson |ρ| above which the analyzer concludes the trace
 # leaks the modelled intermediate. The published RevEAL attack reports
@@ -179,7 +189,7 @@ class RevEAL_2023_1128(Attack):
 
         # No analyst override → run the in-tree correlation analyzer.
         try:
-            samples, models = self._parse_trace(trace_path)
+            samples, models = parse_trace_file(trace_path)
         except (ValueError, json.JSONDecodeError) as exc:
             return AttackResult(
                 attack=self.id,
@@ -204,7 +214,7 @@ class RevEAL_2023_1128(Attack):
                 message=str(exc),
             )
 
-        scores = self._analyze(samples, models)
+        scores = analyze_models(samples, models)
         # Best score = the model with the largest |ρ|; ties are broken
         # by encounter order so callers see a stable winner.
         ranked = sorted(scores, key=lambda s: abs(s["correlation"]), reverse=True)
@@ -271,102 +281,3 @@ class RevEAL_2023_1128(Attack):
             )
         return threshold
 
-    @staticmethod
-    def _parse_trace(path: Path) -> tuple[list[float], list[dict[str, Any]]]:
-        """Parse a trace JSON file into ``(samples, models)``.
-
-        Raises :class:`ValueError` with a precise diagnostic when the
-        document violates the expected schema. Length consistency
-        between ``samples`` and each model's ``predictions`` is enforced
-        here so the analyzer body can assume well-formed inputs.
-        """
-        text = path.read_text(encoding="utf-8")
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"trace is not valid JSON: {exc.msg}") from exc
-        if not isinstance(payload, dict):
-            raise ValueError("trace must be a JSON object with 'samples' and 'model'.")
-        samples_raw = payload.get("samples")
-        models_raw = payload.get("model")
-        if not isinstance(samples_raw, list) or not samples_raw:
-            raise ValueError("trace 'samples' must be a non-empty array of numbers.")
-        if not isinstance(models_raw, list) or not models_raw:
-            raise ValueError("trace 'model' must be a non-empty array of model objects.")
-        try:
-            samples = [float(s) for s in samples_raw]
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"trace 'samples' contains a non-numeric value: {exc}") from exc
-
-        models: list[dict[str, Any]] = []
-        for idx, raw in enumerate(models_raw):
-            if not isinstance(raw, dict):
-                raise ValueError(f"Model {idx} must be an object.")
-            label = str(raw.get("label") or f"model_{idx}")
-            predictions_raw = raw.get("predictions")
-            if not isinstance(predictions_raw, list):
-                raise ValueError(f"Model {idx} ({label!r}) is missing 'predictions' array.")
-            if len(predictions_raw) != len(samples):
-                raise ValueError(
-                    f"Model {idx} ({label!r}) prediction length "
-                    f"{len(predictions_raw)} does not match samples length "
-                    f"{len(samples)}."
-                )
-            try:
-                predictions = [float(p) for p in predictions_raw]
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"Model {idx} ({label!r}) predictions contain a "
-                    f"non-numeric value: {exc}"
-                ) from exc
-            models.append({"label": label, "predictions": predictions})
-        return samples, models
-
-    @staticmethod
-    def _analyze(
-        samples: list[float], models: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Pearson |ρ| between ``samples`` and each model's predictions.
-
-        Models with zero variance (constant samples or constant
-        predictions) get a correlation of 0 and a ``"degenerate":
-        true`` flag — Pearson is undefined in that case but treating it
-        as no signal keeps the verdict logic monotonic.
-        """
-        scores: list[dict[str, Any]] = []
-        for model in models:
-            rho, degenerate = _pearson_correlation(samples, model["predictions"])
-            scores.append(
-                {
-                    "label": model["label"],
-                    "correlation": rho,
-                    "degenerate": degenerate,
-                }
-            )
-        return scores
-
-
-def _pearson_correlation(x: list[float], y: list[float]) -> tuple[float, bool]:
-    """Return ``(rho, degenerate)`` for two equal-length numeric arrays.
-
-    ``degenerate=True`` means one of the inputs had zero variance and
-    Pearson correlation is undefined; the function then returns
-    ``rho=0.0`` so callers can treat the result as no signal.
-    """
-    n = len(x)
-    # Mean
-    mx = sum(x) / n
-    my = sum(y) / n
-    cov = 0.0
-    var_x = 0.0
-    var_y = 0.0
-    for xi, yi in zip(x, y, strict=True):
-        dx = xi - mx
-        dy = yi - my
-        cov += dx * dy
-        var_x += dx * dx
-        var_y += dy * dy
-    denom = math.sqrt(var_x * var_y)
-    if denom == 0.0:
-        return 0.0, True
-    return cov / denom, False

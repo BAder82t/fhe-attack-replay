@@ -6,6 +6,42 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-01
+
+### Added — `eprint-2025-867` ArtifactCheck path
+- **`eprint-2025-867` now consumes user-supplied power/EM/timing
+  traces** via `--evidence trace=PATH` (or
+  `params['evidence_paths']['trace']` in the Python API). The same
+  Pearson |ρ| discriminator that ships with `reveal-2023-1128`
+  computes correlation between trace samples and each candidate
+  leakage model's predictions; verdict is `VULNERABLE` when
+  `max |ρ|` exceeds `eprint_867_correlation_threshold` (default
+  0.5), `SAFE` otherwise. Trace schema matches `reveal-2023-1128`
+  exactly (top-level `samples` + `model[].{label,predictions}`),
+  so a single capture can drive both modules.
+- **ArtifactCheck takes precedence over the live timing distinguisher**
+  when a trace is supplied. The published 2025/867 attack is a
+  power / EM single-trace attack; trace evidence is stronger than
+  the in-tree software-timing analog. With no trace, the existing
+  fingerprint risk-check / live-replay dispatch is unchanged.
+- New params for `eprint-2025-867`:
+  `eprint_867_correlation_threshold` (float in (0, 1]),
+  `ntt_leakage_signature` (analyst override —
+  `"recovered"` → `VULNERABLE`, `"clean"` → `SAFE`).
+- Evidence carries `mode="artifact_check"`,
+  `analyzer="in_tree_pearson_correlation"`, `n_samples`,
+  `n_models`, `correlation_threshold`, `best_model`,
+  `best_correlation`, and `all_model_scores` with per-model
+  `correlation` + `degenerate` flags.
+
+### Changed — internal refactor
+- The Pearson |ρ| analyzer + trace-file parser shared by
+  `reveal-2023-1128` and `eprint-2025-867` is now a private
+  module: `fhe_attack_replay.attacks._correlation`. The
+  `_pearson_correlation` symbol is still re-exported from
+  `attacks.reveal_2023_1128` for test-suite compatibility; no
+  public API changes.
+
 ## [0.3.0] - 2026-05-01
 
 ### Added — Lattigo software-flooding decrypt (helper protocol v0.3)
