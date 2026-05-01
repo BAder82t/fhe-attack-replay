@@ -37,11 +37,18 @@ from fhe_attack_replay.adapters.base import (
 # Helper protocol version this adapter speaks. Bump when the wire
 # protocol changes. Reuse from cheon-2024-127's mitigation list to keep
 # a single source of truth for "what counts as flooding".
-_PROTOCOL_VERSION = "0.2.0"
+_PROTOCOL_VERSION = "0.3.0"
+
+# Default sigma for software flooding when params declares a recognized
+# `noise_flooding` mitigation but no explicit `noise_flooding_sigma`.
+# Expressed as a fraction of delta = floor(Q/t); 1/4 matches the toy-lwe
+# analog and reliably randomizes Cheon's bisection-recovered boundary
+# above the SAFE-verdict variance threshold (default 0.05 * delta).
+_DEFAULT_FLOODING_SIGMA_FRAC_DELTA = 0.25
 
 # Mirrors fhe_attack_replay.attacks.cheon_2024_127._RECOGNIZED_MITIGATIONS.
-# Re-imported lazily inside ``perturb_ciphertext_constant`` to avoid an
-# import cycle at module-load time.
+# Re-imported lazily inside helpers below to avoid an import cycle at
+# module-load time.
 
 
 class _HelperProcess:
@@ -141,8 +148,8 @@ class LattigoAdapter(LibraryAdapter):
             "Requires fhe-replay-lattigo-helper on PATH (build from "
             "vendor/lattigo-helper or download a pre-built release "
             "binary). BFV/BGV live-oracle Replay; CKKS not yet wired. "
-            "Mitigated configs (recognized noise_flooding label) route "
-            "through the static RiskCheck."
+            "Mitigated configs (recognized noise_flooding label) drive "
+            "live software-flooding decrypt via helper protocol v0.3."
         ),
     )
 
@@ -185,9 +192,31 @@ class LattigoAdapter(LibraryAdapter):
             helper_params["poly_degree"] = params["ring_dimension"]
         if "log_q" not in helper_params and "coeff_modulus_bits" in params:
             helper_params["log_q"] = params["coeff_modulus_bits"]
+        # Two-phase setup: ask the helper for delta first (with flooding
+        # disabled), then re-call setup with `noise_flooding_sigma`
+        # derived from delta when the user declared a recognized
+        # mitigation label but no explicit sigma. The helper itself
+        # doesn't know about Cheon thresholds; the policy lives here.
+        if (
+            _params_recognize_flooding(params)
+            and helper_params.get("noise_flooding_sigma") in (None, 0)
+        ):
+            probe = proc.request(
+                {"op": "setup", "scheme": scheme.upper(), "params": helper_params}
+            )
+            delta = int(probe["delta"])
+            sigma = max(1, int(delta * _DEFAULT_FLOODING_SIGMA_FRAC_DELTA))
+            helper_params["noise_flooding_sigma"] = str(sigma)
+        # JSON cannot represent ints > 2^53 cleanly; force string
+        # encoding for any large explicit sigma.
+        sigma_value = helper_params.get("noise_flooding_sigma")
+        if isinstance(sigma_value, int) and abs(sigma_value) > (1 << 53) - 1:
+            helper_params["noise_flooding_sigma"] = str(sigma_value)
         setup = proc.request(
             {"op": "setup", "scheme": scheme.upper(), "params": helper_params}
         )
+        flooding_active = bool(setup.get("noise_flooding_active", False))
+        flooding_sigma_str = setup.get("noise_flooding_sigma")
         return AdapterContext(
             library=self.name,
             scheme=scheme.upper(),
@@ -203,6 +232,10 @@ class LattigoAdapter(LibraryAdapter):
                 "ciphertext_modulus_bits": int(setup["ciphertext_modulus_bits"]),
                 "dcrt_tower_count": int(setup["dcrt_tower_count"]),
                 "dcrt_moduli_bits": list(setup["dcrt_moduli_bits"]),
+                "noise_flooding_active": flooding_active,
+                "noise_flooding_sigma": (
+                    int(flooding_sigma_str) if flooding_sigma_str else 0
+                ),
             },
         )
 
@@ -244,13 +277,6 @@ class LattigoAdapter(LibraryAdapter):
         *,
         component: int = 0,
     ) -> Any:
-        if _params_recognize_flooding(ctx.params):
-            raise NotImplementedError(
-                "lattigo helper has no native NOISE_FLOODING_DECRYPT path; "
-                "mitigated configs are routed through the static RiskCheck "
-                "(which recognizes lattigo-noise-flooding / "
-                "openfhe-noise-flooding-decrypt / etc.)."
-            )
         proc: _HelperProcess = ctx.handles["helper"]
         # The helper accepts offset as either a JSON number (small ints
         # round-trip cleanly) or a decimal string (production-bit-size
@@ -275,6 +301,30 @@ class LattigoAdapter(LibraryAdapter):
         # echoes it from plaintext_delta; the cached value matches.
         return int(ctx.handles["delta"])
 
+    def seed_replay_rng(self, ctx: AdapterContext, seed: int) -> None:
+        """Re-seed the helper's flooding RNG for per-trial independence.
+
+        Called by Cheon's `_seed_trial` between bisection trials so each
+        trial's flooding sequence is independent. Without this, the
+        across-trial variance signal that distinguishes a flooded oracle
+        collapses (every trial sees the same flood sequence) and the
+        SAFE-via-Replay path would falsely report VULNERABLE.
+        """
+        if not ctx.handles.get("noise_flooding_active"):
+            return
+        proc: _HelperProcess = ctx.handles["helper"]
+        # Helper accepts int64 seed. Wrap the master seed mod 2^63 to
+        # stay in range; the helper's PRNG is seeded fresh per call so
+        # collisions with prior seeds are not a concern.
+        wire_seed = int(seed) & ((1 << 63) - 1)
+        proc.request(
+            {
+                "op": "set_seed",
+                "context_id": ctx.handles["context_id"],
+                "seed": wire_seed,
+            }
+        )
+
     def polynomial_replay_metadata(
         self, ctx: AdapterContext, ciphertext: Any
     ) -> dict[str, Any]:
@@ -286,6 +336,8 @@ class LattigoAdapter(LibraryAdapter):
             "ciphertext_modulus_bits": int(ctx.handles["ciphertext_modulus_bits"]),
             "dcrt_tower_count": int(ctx.handles["dcrt_tower_count"]),
             "dcrt_moduli_bits": list(ctx.handles["dcrt_moduli_bits"]),
+            "software_flooding_active": bool(ctx.handles.get("noise_flooding_active", False)),
+            "software_flooding_sigma": int(ctx.handles.get("noise_flooding_sigma", 0)),
         }
 
     def evaluator_fingerprint(self, ctx: AdapterContext) -> dict[str, Any]:

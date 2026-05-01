@@ -198,6 +198,7 @@ class Cheon2024_127(Attack):
         boundaries: list[int] = []
         for trial_seed in trial_seeds:
             self._seed_trial(ctx, trial_seed)
+            self._seed_adapter_replay_rng(adapter, ctx, trial_seed)
             boundaries.append(
                 self._bisect_boundary(
                     adapter, ctx, ct_zero, rounds=bisect_rounds, delta=delta
@@ -309,6 +310,24 @@ class Cheon2024_127(Attack):
         gen = np.random.default_rng(master)
         seeds = [int(gen.integers(0, 2**32)) for _ in range(trials)]
         return master, seeds
+
+    @staticmethod
+    def _seed_adapter_replay_rng(
+        adapter: LibraryAdapter, ctx: AdapterContext, trial_seed: int
+    ) -> None:
+        """Re-seed adapter-side RNG between bisection trials.
+
+        Adapters that drive a separate process or library with its own
+        randomness (today: lattigo helper's software-flooding RNG)
+        expose a ``seed_replay_rng(ctx, seed)`` method. Without this
+        per-trial reseed, the helper's flooding sequence is identical
+        across trials and the across-trial variance signal collapses.
+        Adapters without an exposed RNG silently no-op.
+        """
+        seeder = getattr(adapter, "seed_replay_rng", None)
+        if seeder is None:
+            return
+        seeder(ctx, int(trial_seed))
 
     @staticmethod
     def _seed_trial(ctx: AdapterContext, trial_seed: int) -> None:

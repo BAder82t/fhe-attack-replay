@@ -6,6 +6,38 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-01
+
+### Added — Lattigo software-flooding decrypt (helper protocol v0.3)
+- **Helper protocol bumped to `0.3.0`.** New `set_seed` op
+  (`{"op":"set_seed","context_id":"<id>","seed":N}`) reseeds the
+  helper's flooding RNG between bisection trials. `setup` accepts
+  `noise_flooding_sigma` (number or decimal string) and an optional
+  `noise_flooding_seed`; when sigma > 0 every decrypt samples a fresh
+  Gaussian-distributed integer offset (std-dev = sigma in q-units),
+  adds it as a constant polynomial to ciphertext component c0 in
+  NTT/eval form, and decrypts the randomized copy. The setup
+  response now carries `noise_flooding_active` and (when active)
+  echoes the sigma back as a decimal string.
+- **`LattigoAdapter` no longer routes mitigated configs to the
+  RiskCheck.** When `params['noise_flooding']` is in the recognized
+  mitigation set (`lattigo-noise-flooding`,
+  `openfhe-noise-flooding-decrypt`, `eprint-2024-424`, …) and no
+  explicit `noise_flooding_sigma` is supplied, the adapter
+  auto-derives `sigma = delta // 4` from the helper's reported delta
+  and re-runs setup with flooding active. Cheon then runs a real
+  live Replay against the flooded oracle and produces a SAFE verdict
+  driven by across-trial boundary variance — no fallback to the
+  static RiskCheck.
+- **`LattigoAdapter.seed_replay_rng(ctx, seed)`** sends `set_seed` to
+  the helper between trials. Cheon's `_seed_adapter_replay_rng`
+  dispatches to this method when the adapter exposes it (and silently
+  no-ops for adapters without per-trial state, like OpenFHE whose
+  randomness lives inside the C++ library).
+- Replay evidence now carries `software_flooding_active` and
+  `software_flooding_sigma`. `polynomial_replay_metadata` reports
+  these alongside the existing per-tower DCRT moduli.
+
 ## [0.2.0] - 2026-05-01
 
 ### Added — Lattigo live-oracle Cheon Replay (BFV/BGV)

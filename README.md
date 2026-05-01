@@ -166,6 +166,16 @@ decimal strings when delta exceeds int64. Replay evidence records
 `polynomial_domain="RNS evaluation form (NTT)"`, the plaintext modulus, and
 the per-tower DCRT moduli sizes.
 
+Mitigated configs (params with a recognized `noise_flooding` label like
+`lattigo-noise-flooding`, `openfhe-noise-flooding-decrypt`,
+`eprint-2024-424`) drive software flooding on the helper side: every
+decrypt samples a fresh Gaussian-distributed integer offset (default
+std-dev = `delta/4`, override via `noise_flooding_sigma`) and adds it
+as a constant polynomial to c0 before native decryption. Cheon's
+across-trial boundary variance then drives a real `SAFE` verdict via
+Replay, not via the RiskCheck fallback. Evidence carries
+`software_flooding_active=true` and the active sigma.
+
 ```bash
 # Build the lattigo helper from source
 cd vendor/lattigo-helper && go build -o "$HOME/.local/bin/fhe-replay-lattigo-helper" .

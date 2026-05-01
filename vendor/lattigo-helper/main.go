@@ -6,9 +6,9 @@
 // The Python adapter (src/fhe_attack_replay/adapters/lattigo.py)
 // spawns this binary and exchanges messages with it.
 //
-// Supported commands:
+// Supported commands (protocol v0.3):
 //
-//	{"op":"hello"}                   -> {"version":"0.2.0","scheme_support":["BFV","BGV"]}
+//	{"op":"hello"}                   -> {"version":"0.3.0","scheme_support":["BFV","BGV"]}
 //	{"op":"setup","scheme":"BFV", "params":{...}}
 //	                                 -> {"context_id":"<id>","plaintext_modulus":"N","poly_degree":N,"delta":"N","ciphertext_modulus_bits":N,"dcrt_tower_count":N,"dcrt_moduli_bits":[...]}
 //	{"op":"encrypt","context_id":"<id>","values":[ints]}
@@ -19,6 +19,8 @@
 //	                                 -> {"ciphertext_id":"<id>"}
 //	{"op":"plaintext_delta","context_id":"<id>","ciphertext_id":"<id>"}
 //	                                 -> {"delta":"N"}
+//	{"op":"set_seed","context_id":"<id>","seed":N}
+//	                                 -> {"ok":true}
 //	{"op":"shutdown"}                -> {"ok":true}  (then exits)
 //
 // Errors: any failure surfaces as `{"error":"..."}`.
@@ -26,6 +28,16 @@
 // Plaintext-modulus / Q / delta values that may exceed 2^53 are
 // transmitted as decimal strings to round-trip through JSON without
 // precision loss. The Python adapter parses them back via int().
+//
+// Software noise-flooding decrypt:
+//
+// Setup accepts `noise_flooding_sigma` (number or decimal string) plus an
+// optional `noise_flooding_seed`. When sigma > 0, every decrypt samples a
+// fresh Gaussian-distributed integer offset (std-dev sigma, in q-units),
+// adds it as a constant polynomial to ciphertext component c0 in NTT/eval
+// form, and decrypts that randomized copy. Re-seed via `set_seed` to make
+// per-trial bisection runs independent — the Cheon dispatch uses this to
+// produce real `SAFE` verdicts on configs that opt into flooding.
 package main
 
 import (
@@ -34,14 +46,16 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"math/rand"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/tuneinsight/lattigo/v6/core/rlwe"
 	"github.com/tuneinsight/lattigo/v6/schemes/bgv"
 )
 
-const helperVersion = "0.2.0"
+const helperVersion = "0.3.0"
 
 type request struct {
 	Op           string         `json:"op"`
@@ -53,8 +67,9 @@ type request struct {
 	// Offset accepts either a JSON number or a JSON decimal string so
 	// big-int offsets (perturb amounts that exceed int64 against
 	// production-bit-size delta = floor(Q/t)) round-trip without loss.
-	Offset    any `json:"offset,omitempty"`
-	Component int `json:"component,omitempty"`
+	Offset    any   `json:"offset,omitempty"`
+	Component int   `json:"component,omitempty"`
+	Seed      int64 `json:"seed,omitempty"`
 }
 
 type response map[string]any
@@ -62,13 +77,20 @@ type response map[string]any
 // helperContext holds keys, encoder, encryptor/decryptor, and a registry
 // of live ciphertexts for one (scheme, params) tuple.
 type helperContext struct {
-	scheme       string
-	params       bgv.Parameters
-	encoder      *bgv.Encoder
-	encryptor    *rlwe.Encryptor
-	decryptor    *rlwe.Decryptor
-	ciphertexts  map[string]*rlwe.Ciphertext
-	ciphertextN  uint64 // monotonic counter for ciphertext_id
+	scheme      string
+	params      bgv.Parameters
+	encoder     *bgv.Encoder
+	encryptor   *rlwe.Encryptor
+	decryptor   *rlwe.Decryptor
+	ciphertexts map[string]*rlwe.Ciphertext
+	ciphertextN uint64 // monotonic counter for ciphertext_id
+	// Software noise-flooding state. When floodingSigma > 0, every
+	// decrypt samples a fresh integer offset N(0, sigma²), adds it as
+	// a constant polynomial to ciphertext component c0 in NTT/eval
+	// form, and decrypts the randomized copy. Re-seed via opSetSeed
+	// for per-trial bisection independence.
+	floodingSigma *big.Int
+	floodingRng   *rand.Rand
 }
 
 var (
@@ -124,6 +146,8 @@ func dispatch(req *request) response {
 		return opPerturbConstant(req)
 	case "plaintext_delta":
 		return opPlaintextDelta(req)
+	case "set_seed":
+		return opSetSeed(req)
 	default:
 		return response{"error": "unknown op: " + req.Op}
 	}
@@ -189,6 +213,59 @@ func paramUint64(p map[string]any, key string, def uint64) uint64 {
 		return n
 	}
 	return def
+}
+
+func paramInt64(p map[string]any, key string, def int64) int64 {
+	if p == nil {
+		return def
+	}
+	switch v := p[key].(type) {
+	case nil:
+		return def
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	case string:
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return def
+		}
+		return n
+	}
+	return def
+}
+
+// parseBigInt reads a JSON number or decimal-string field as *big.Int.
+// Returns (nil, nil) when the key is absent. Used for noise-flooding
+// sigma which routinely exceeds 2^53 (typically scaled to delta/4 for
+// production-bit-size Q).
+func parseBigInt(p map[string]any, key string) (*big.Int, error) {
+	if p == nil {
+		return nil, nil
+	}
+	switch v := p[key].(type) {
+	case nil:
+		return nil, nil
+	case float64:
+		if v != float64(int64(v)) {
+			return nil, fmt.Errorf("non-integer JSON number %v", v)
+		}
+		return big.NewInt(int64(v)), nil
+	case int:
+		return big.NewInt(int64(v)), nil
+	case int64:
+		return big.NewInt(v), nil
+	case string:
+		bi, ok := new(big.Int).SetString(v, 10)
+		if !ok {
+			return nil, fmt.Errorf("invalid decimal string %q", v)
+		}
+		return bi, nil
+	}
+	return nil, fmt.Errorf("unsupported type %T", p[key])
 }
 
 func paramIntSlice(p map[string]any, key string, def []int) []int {
@@ -290,17 +367,28 @@ func opSetup(req *request) response {
 	t := new(big.Int).SetUint64(plainModulus)
 	delta := new(big.Int).Quo(q, t)
 
+	floodingSigma, err := parseBigInt(req.Params, "noise_flooding_sigma")
+	if err != nil {
+		return response{"error": "noise_flooding_sigma: " + err.Error()}
+	}
+	if floodingSigma != nil && floodingSigma.Sign() < 0 {
+		return response{"error": "noise_flooding_sigma must be >= 0"}
+	}
+	floodingSeed := paramInt64(req.Params, "noise_flooding_seed", time.Now().UnixNano())
+
 	id := newID("ctx", &contextN)
 	contexts[id] = &helperContext{
-		scheme:      scheme,
-		params:      params,
-		encoder:     ecd,
-		encryptor:   enc,
-		decryptor:   dec,
-		ciphertexts: map[string]*rlwe.Ciphertext{},
+		scheme:        scheme,
+		params:        params,
+		encoder:       ecd,
+		encryptor:     enc,
+		decryptor:     dec,
+		ciphertexts:   map[string]*rlwe.Ciphertext{},
+		floodingSigma: floodingSigma,
+		floodingRng:   rand.New(rand.NewSource(floodingSeed)),
 	}
 
-	return response{
+	resp := response{
 		"context_id":              id,
 		"poly_degree":             params.N(),
 		"plaintext_modulus":       strconv.FormatUint(plainModulus, 10),
@@ -311,6 +399,13 @@ func opSetup(req *request) response {
 		"dcrt_moduli_bits":        bitsPerTower,
 		"scheme":                  scheme,
 	}
+	if floodingSigma != nil && floodingSigma.Sign() > 0 {
+		resp["noise_flooding_sigma"] = floodingSigma.String()
+		resp["noise_flooding_active"] = true
+	} else {
+		resp["noise_flooding_active"] = false
+	}
+	return resp
 }
 
 func bits64Len(n uint64) int {
@@ -353,12 +448,49 @@ func opDecrypt(req *request) response {
 	if !ok {
 		return response{"error": "unknown ciphertext_id"}
 	}
-	pt := ctx.decryptor.DecryptNew(ct)
+	target := ct
+	if ctx.floodingSigma != nil && ctx.floodingSigma.Sign() > 0 {
+		// Sample integer offset N(0, sigma²); add as a constant
+		// polynomial to component c0 in NTT/eval form. The result
+		// is a fresh randomized ciphertext that decrypts to the same
+		// plaintext modulo flooding noise — Cheon's bisection sees a
+		// non-deterministic boundary across trials when re-seeded.
+		offset := sampleGaussianBigInt(ctx.floodingRng, ctx.floodingSigma)
+		target = ct.CopyNew()
+		level := target.Level()
+		moduli := ctx.params.RingQ().ModuliChain()
+		if level+1 > len(moduli) {
+			return response{"error": "ciphertext level exceeds RingQ moduli chain"}
+		}
+		moduli = moduli[:level+1]
+		poly := target.Value[0]
+		for tower, q := range moduli {
+			residue := bigSignedModUint64(offset, q)
+			coeffs := poly.Coeffs[tower]
+			for i := range coeffs {
+				sum := coeffs[i] + residue
+				if sum >= q {
+					sum -= q
+				}
+				coeffs[i] = sum
+			}
+		}
+	}
+	pt := ctx.decryptor.DecryptNew(target)
 	out := make([]int64, ctx.params.N())
 	if err := ctx.encoder.Decode(pt, out); err != nil {
 		return response{"error": "decode: " + err.Error()}
 	}
 	return response{"values": out}
+}
+
+func opSetSeed(req *request) response {
+	ctx, ok := contexts[req.ContextID]
+	if !ok {
+		return response{"error": "unknown context_id"}
+	}
+	ctx.floodingRng = rand.New(rand.NewSource(req.Seed))
+	return response{"ok": true}
 }
 
 func opPerturbConstant(req *request) response {
@@ -430,6 +562,26 @@ func parseOffset(raw any) (*big.Int, error) {
 		return bi, nil
 	}
 	return nil, fmt.Errorf("unsupported offset type %T", raw)
+}
+
+// sampleGaussianBigInt draws an integer-valued sample from N(0, sigma²).
+// Uses math/rand.NormFloat64 (standard normal) scaled by sigma. For
+// sigma > 2^53 the float64 sample loses low-order precision but the
+// high bits are still well-distributed — flooding semantics only need
+// the std-dev to dominate the encryption-noise boundary, low bits are
+// noise on noise.
+func sampleGaussianBigInt(rng *rand.Rand, sigma *big.Int) *big.Int {
+	if sigma == nil || sigma.Sign() == 0 {
+		return new(big.Int)
+	}
+	g := rng.NormFloat64()
+	sigmaF, _ := new(big.Float).SetInt(sigma).Float64()
+	scaled := g * sigmaF
+	out, _ := new(big.Float).SetFloat64(scaled).Int(nil)
+	if out == nil {
+		return new(big.Int)
+	}
+	return out
 }
 
 // bigSignedModUint64 returns ((offset mod q) + q) mod q as uint64,

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math/big"
 	"strconv"
 	"testing"
 )
@@ -290,6 +291,101 @@ func TestUnknownCiphertextID(t *testing.T) {
 	resp := dispatch(&request{Op: "decrypt", ContextID: ctxID, CiphertextID: "missing"})
 	if resp["error"] == nil {
 		t.Fatalf("expected error for missing ciphertext, got %v", resp)
+	}
+}
+
+func TestSetupFloodingActive(t *testing.T) {
+	resetState()
+	resp := dispatch(&request{
+		Op:     "setup",
+		Scheme: "BFV",
+		Params: map[string]any{
+			"poly_degree":          4096,
+			"plaintext_modulus":    65537,
+			"noise_flooding_sigma": "1000000000",
+		},
+	})
+	if errVal, ok := resp["error"]; ok {
+		t.Fatalf("setup returned error: %v", errVal)
+	}
+	if resp["noise_flooding_active"] != true {
+		t.Fatalf("expected noise_flooding_active=true, got %v", resp["noise_flooding_active"])
+	}
+	if resp["noise_flooding_sigma"] != "1000000000" {
+		t.Fatalf("expected sigma echoed back, got %v", resp["noise_flooding_sigma"])
+	}
+}
+
+func TestSetupRejectsNegativeSigma(t *testing.T) {
+	resetState()
+	resp := dispatch(&request{
+		Op:     "setup",
+		Scheme: "BFV",
+		Params: map[string]any{
+			"poly_degree":          4096,
+			"plaintext_modulus":    65537,
+			"noise_flooding_sigma": "-10",
+		},
+	})
+	if resp["error"] == nil {
+		t.Fatalf("expected error for negative sigma, got %v", resp)
+	}
+}
+
+func TestFloodingDecryptVariesAcrossSeeds(t *testing.T) {
+	resetState()
+	// Probe setup once to get delta (helper-computed floor(Q/t)),
+	// then re-setup with sigma = delta/2 so flooding noise actually
+	// changes the decoded slot across seeds. Hard-coded sigma values
+	// would either be smaller than the rounding window (no observable
+	// effect) or wider than Q (degenerate).
+	probe := dispatch(&request{
+		Op:     "setup",
+		Scheme: "BFV",
+		Params: map[string]any{"poly_degree": 4096, "plaintext_modulus": 65537},
+	})
+	deltaStr := probe["delta"].(string)
+	delta, _ := new(big.Int).SetString(deltaStr, 10)
+	sigma := new(big.Int).Quo(delta, big.NewInt(2))
+
+	resetState()
+	setup := dispatch(&request{
+		Op:     "setup",
+		Scheme: "BFV",
+		Params: map[string]any{
+			"poly_degree":          4096,
+			"plaintext_modulus":    65537,
+			"noise_flooding_sigma": sigma.String(),
+		},
+	})
+	ctxID := setup["context_id"].(string)
+	enc := dispatch(&request{Op: "encrypt", ContextID: ctxID, Values: []int64{0}})
+	ctID := enc["ciphertext_id"].(string)
+
+	dispatch(&request{Op: "set_seed", ContextID: ctxID, Seed: 1})
+	a := dispatch(&request{Op: "decrypt", ContextID: ctxID, CiphertextID: ctID})
+	dispatch(&request{Op: "set_seed", ContextID: ctxID, Seed: 999999})
+	b := dispatch(&request{Op: "decrypt", ContextID: ctxID, CiphertextID: ctID})
+
+	av := a["values"].([]int64)
+	bv := b["values"].([]int64)
+	same := true
+	for i := range av {
+		if av[i] != bv[i] {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Fatalf("flooding decrypt produced identical output for distinct seeds; expected variance")
+	}
+}
+
+func TestSetSeedRequiresKnownContext(t *testing.T) {
+	resetState()
+	resp := dispatch(&request{Op: "set_seed", ContextID: "missing", Seed: 42})
+	if resp["error"] == nil {
+		t.Fatalf("expected error for missing context, got %v", resp)
 	}
 }
 

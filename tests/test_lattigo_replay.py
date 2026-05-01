@@ -65,11 +65,13 @@ def test_replay_vulnerable_against_unmitigated_lattigo_bgv():
     assert r.status is AttackStatus.VULNERABLE
 
 
-def test_mitigated_lattigo_falls_through_to_risk_check_safe():
-    # The helper has no native NOISE_FLOODING_DECRYPT path; the adapter
-    # raises NotImplementedError from perturb_ciphertext_constant when a
-    # recognized mitigation label is set, so Cheon dispatch falls back
-    # to the static RiskCheck — which produces a real SAFE verdict.
+def test_mitigated_lattigo_drives_software_flooding_safe_via_replay():
+    # Helper protocol v0.3 supports software noise-flooding: setup
+    # accepts `noise_flooding_sigma` and decrypt samples a fresh
+    # Gaussian offset added per-tower to c0 in eval form. Mitigated
+    # configs (recognized `noise_flooding` label) get sigma = delta/4
+    # auto-derived by the adapter, and Cheon's per-trial reseed makes
+    # bisection see across-trial variance → real SAFE via Replay.
     report = run(
         library="lattigo",
         params={
@@ -78,13 +80,47 @@ def test_mitigated_lattigo_falls_through_to_risk_check_safe():
             "plaintext_modulus": 65537,
             "adversary_model": "ind-cpa-d",
             "noise_flooding": "lattigo-noise-flooding",
+            "replay_trials": 3,
+            "bisect_rounds": 16,
+            "replay_seed": 7,
         },
         attacks=["cheon-2024-127"],
     )
     r = report.results[0]
-    assert r.evidence["mode"] == "risk_check"
-    assert r.evidence["mitigation_recognized"] is True
+    assert r.evidence["mode"] == "replay"
+    assert r.evidence["intent_actual"] == "replay"
+    assert r.evidence["software_flooding_active"] is True
+    assert r.evidence["software_flooding_sigma"] > 0
+    assert r.evidence["deterministic_oracle"] is False
     assert r.status is AttackStatus.SAFE
+
+
+def test_explicit_noise_flooding_sigma_routes_through_helper():
+    # User can set sigma directly. The helper echoes it back through
+    # `software_flooding_sigma` and decrypt-time flooding takes effect;
+    # Cheon dispatch reaches Replay regardless of the label-based
+    # mitigation routing. (We don't pin SAFE/VULNERABLE here because
+    # the boundary-vs-threshold relationship depends on bisection
+    # depth × sigma in a non-trivial way; the auto-derived mitigation
+    # path in test_mitigated_lattigo_drives_software_flooding_safe_via_replay
+    # is the SAFE-verdict gate.)
+    report = run(
+        library="lattigo",
+        params={
+            "scheme": "BFV",
+            "poly_degree": 4096,
+            "plaintext_modulus": 65537,
+            "noise_flooding_sigma": str(int(2e58)),  # comparable to delta/4
+            "replay_trials": 2,
+            "bisect_rounds": 8,
+            "replay_seed": 11,
+        },
+        attacks=["cheon-2024-127"],
+    )
+    r = report.results[0]
+    assert r.evidence["mode"] == "replay"
+    assert r.evidence["software_flooding_active"] is True
+    assert r.evidence["software_flooding_sigma"] == int(2e58)
 
 
 def test_replay_evidence_carries_lattigo_polynomial_metadata():
