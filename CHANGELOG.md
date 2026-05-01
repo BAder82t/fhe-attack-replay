@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-01
+
 ### Added — Lattigo live-oracle Cheon Replay (BFV/BGV)
 - **`cheon-2024-127` now runs as a real live-oracle Replay against
   Lattigo BFV/BGV via the Go helper binary
