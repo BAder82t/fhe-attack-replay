@@ -41,10 +41,12 @@ def test_cli_doctor(capsys):
     assert "dependency-free live replay" in out
 
 
-def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Path):
-    # Use lattigo (still a scaffold adapter without helper bindings) so at
-    # least one selected attack returns NOT_IMPLEMENTED, exercising the
-    # strict-exit path without triggering the SEAL side-channel RiskCheck.
+def test_cli_run_writes_report_and_badge_with_not_implemented_exit(
+    tmp_path: Path, pending_attack_id
+):
+    # Every shipped attack now produces a real verdict (live or
+    # ArtifactCheck-skipped). Use the test-only `pending_attack_id`
+    # fixture to exercise the strict-NOT_IMPLEMENTED exit path.
     params = tmp_path / "params.json"
     params.write_text(json.dumps({"scheme": "BFV"}))
     out = tmp_path / "report.json"
@@ -56,6 +58,8 @@ def test_cli_run_writes_report_and_badge_with_not_implemented_exit(tmp_path: Pat
             "lattigo",
             "--params",
             str(params),
+            "--attacks",
+            pending_attack_id,
             "--output-json",
             str(out),
             "--badge",

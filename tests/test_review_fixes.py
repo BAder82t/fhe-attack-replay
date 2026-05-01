@@ -273,15 +273,26 @@ def test_cheon_recognizes_hyphenated_mitigation_label():
 # --- live-oracle capability gate ------------------------------------------
 
 
-def test_live_oracle_default_false_keeps_scaffold_adapters_on_riskcheck():
-    # Lattigo's capability does not set live_oracle => cheon-2024-127 picks
-    # the RiskCheck branch even though the adapter's `is_available()` is
-    # False (helper missing). This test pins that contract.
-    report = run(
-        library="lattigo",
-        params={"scheme": "BFV", "adversary_model": "ind-cpa-d", "noise_flooding": "none"},
-        attacks=["cheon-2024-127"],
-    )
+def test_lattigo_falls_back_to_risk_check_when_helper_missing():
+    # Lattigo's capability advertises `live_oracle=True` (helper-driven
+    # Replay shipped in v0.2). When the helper binary is not on PATH,
+    # `is_available()` returns False and Cheon dispatch falls back to
+    # the static RiskCheck — which still produces a real verdict on
+    # `(adversary_model, noise_flooding)` inputs. This test pins that
+    # contract by transiently shadowing PATH so the helper binary is
+    # invisible to `shutil.which`.
+    import os
+
+    saved_path = os.environ.get("PATH", "")
+    try:
+        os.environ["PATH"] = "/nonexistent"
+        report = run(
+            library="lattigo",
+            params={"scheme": "BFV", "adversary_model": "ind-cpa-d", "noise_flooding": "none"},
+            attacks=["cheon-2024-127"],
+        )
+    finally:
+        os.environ["PATH"] = saved_path
     r = report.results[0]
     assert r.evidence["mode"] == "risk_check"
     assert r.status is AttackStatus.VULNERABLE

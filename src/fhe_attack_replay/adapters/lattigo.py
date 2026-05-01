@@ -9,24 +9,14 @@ that exposes the primitives the harness needs over a JSON protocol on
 stdin/stdout. The Python side spawns the helper, exchanges
 line-delimited JSON, and parses responses.
 
-**Status**: the Go helper is currently a scaffold (only ``hello`` and
-``shutdown`` are implemented). The adapter therefore:
-
-- ``is_available()`` returns True iff the helper is on PATH.
-- ``setup()`` spawns the helper, does a ``hello`` round-trip to verify
-  it speaks our protocol version, and returns a context that owns the
-  subprocess handle.
-- ``encrypt()`` / ``decrypt()`` / ``perturb_ciphertext_constant()`` /
-  ``plaintext_delta()`` issue the corresponding JSON requests; the
-  helper responds with an explicit
-  ``{"error":"… not yet implemented …"}`` which we surface as
-  ``RuntimeError``. The harness then records the result as ``ERROR``
-  per the documented "no false-positive verdicts" contract.
-
-Once the helper's ops are wired (lattigo BFV/BGV bindings against
-``github.com/tuneinsight/lattigo/v6``) this adapter starts producing
-real verdicts without any further Python changes — the wire protocol
-is the contract.
+As of helper protocol v0.2 the helper drives a real Lattigo BGV/BFV
+context: setup builds keys, encrypt/decrypt round-trip integers
+through the unified ``schemes/bgv`` package, and perturb_constant
+mutates ciphertext component c0 in evaluation form (the Cheon replay
+primitive). Mitigated configurations (params with a recognized
+``noise_flooding`` label) are routed back through the static
+RiskCheck — the helper does not yet implement software flooding, so a
+live Replay against a mitigated config would falsely report VULNERABLE.
 """
 
 from __future__ import annotations
@@ -44,7 +34,14 @@ from fhe_attack_replay.adapters.base import (
     LibraryAdapter,
 )
 
-_PROTOCOL_VERSION = "0.1.0"
+# Helper protocol version this adapter speaks. Bump when the wire
+# protocol changes. Reuse from cheon-2024-127's mitigation list to keep
+# a single source of truth for "what counts as flooding".
+_PROTOCOL_VERSION = "0.2.0"
+
+# Mirrors fhe_attack_replay.attacks.cheon_2024_127._RECOGNIZED_MITIGATIONS.
+# Re-imported lazily inside ``perturb_ciphertext_constant`` to avoid an
+# import cycle at module-load time.
 
 
 class _HelperProcess:
@@ -112,19 +109,40 @@ def _shutdown_proc(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
+def _params_recognize_flooding(params: dict[str, Any]) -> bool:
+    """True iff ``params['noise_flooding']`` resolves to a known mitigation.
+
+    Imported lazily from cheon_2024_127 to avoid an import cycle at
+    module-load time. The check is intentionally adapter-side rather
+    than helper-side: the helper does not yet implement software
+    flooding, so a live Replay against a mitigated config would
+    falsely report VULNERABLE. Raising NotImplementedError from the
+    perturb primitive sends Cheon back to the static RiskCheck, which
+    *does* recognize these labels and produces a real SAFE verdict.
+    """
+    from fhe_attack_replay.attacks.cheon_2024_127 import (
+        _RECOGNIZED_MITIGATIONS,
+        _normalize,
+    )
+
+    label = _normalize(params.get("noise_flooding"))
+    return label in _RECOGNIZED_MITIGATIONS
+
+
 class LattigoAdapter(LibraryAdapter):
     """Adapter for tuneinsight/lattigo via the Go helper binary."""
 
     name = "lattigo"
     capability = AdapterCapability(
-        schemes=("BFV", "BGV", "CKKS"),
+        schemes=("BFV", "BGV"),
         requires_native=True,
-        live_oracle=False,  # flips to True once the helper's ops land
+        live_oracle=True,
         notes=(
             "Requires fhe-replay-lattigo-helper on PATH (build from "
-            "vendor/lattigo-helper). Helper currently a scaffold — "
-            "encrypt/decrypt/perturb ops surface as ERROR until lattigo "
-            "wiring lands."
+            "vendor/lattigo-helper or download a pre-built release "
+            "binary). BFV/BGV live-oracle Replay; CKKS not yet wired. "
+            "Mitigated configs (recognized noise_flooding label) route "
+            "through the static RiskCheck."
         ),
     )
 
@@ -141,11 +159,11 @@ class LattigoAdapter(LibraryAdapter):
                 "Build it from vendor/lattigo-helper/ "
                 "(cd vendor/lattigo-helper && go build -o "
                 f"$HOME/.local/bin/{self.HELPER_BINARY} .) or download a "
-                "release binary."
+                "release binary from the GitHub Releases page."
             )
         proc = _HelperProcess(binary, label="lattigo helper")
-        # hello round-trip — verifies the binary speaks our protocol
-        # version. Mismatches are surfaced as RuntimeError.
+        # Hello round-trip — verifies the binary speaks our protocol
+        # version. Mismatches surface as RuntimeError.
         hello = proc.request({"op": "hello"})
         if hello.get("version") != _PROTOCOL_VERSION:
             raise RuntimeError(
@@ -158,35 +176,65 @@ class LattigoAdapter(LibraryAdapter):
                 f"lattigo helper does not advertise scheme {scheme!r} "
                 f"(supports: {hello.get('scheme_support', [])})."
             )
+        # Map common cross-adapter aliases to the helper's wire keys.
+        # `ring_dimension` (OpenFHE) and `coeff_modulus_bits` (OpenFHE)
+        # are accepted alongside the helper's native `poly_degree` /
+        # `log_q` so a single `params.json` can drive multiple adapters.
+        helper_params: dict[str, Any] = dict(params)
+        if "poly_degree" not in helper_params and "ring_dimension" in params:
+            helper_params["poly_degree"] = params["ring_dimension"]
+        if "log_q" not in helper_params and "coeff_modulus_bits" in params:
+            helper_params["log_q"] = params["coeff_modulus_bits"]
+        setup = proc.request(
+            {"op": "setup", "scheme": scheme.upper(), "params": helper_params}
+        )
         return AdapterContext(
             library=self.name,
             scheme=scheme.upper(),
             params=params,
-            handles={"helper": proc, "scheme": scheme.upper()},
+            handles={
+                "helper": proc,
+                "scheme": scheme.upper(),
+                "context_id": setup["context_id"],
+                "poly_degree": int(setup["poly_degree"]),
+                "plaintext_modulus": int(setup["plaintext_modulus"]),
+                "delta": int(setup["delta"]),
+                "ciphertext_modulus": int(setup["ciphertext_modulus"]),
+                "ciphertext_modulus_bits": int(setup["ciphertext_modulus_bits"]),
+                "dcrt_tower_count": int(setup["dcrt_tower_count"]),
+                "dcrt_moduli_bits": list(setup["dcrt_moduli_bits"]),
+            },
         )
 
     def encrypt(self, ctx: AdapterContext, plaintext: Any) -> Any:
         proc: _HelperProcess = ctx.handles["helper"]
-        values = plaintext if isinstance(plaintext, list) else [int(plaintext)]
+        if isinstance(plaintext, list):
+            values = [int(v) for v in plaintext]
+        elif isinstance(plaintext, (int, bool)):
+            values = [int(plaintext)]
+        elif plaintext is None:
+            values = [0]
+        else:
+            values = [int(v) for v in plaintext]
         response = proc.request(
             {
                 "op": "encrypt",
-                "context_id": ctx.handles.get("context_id", ""),
-                "values": [int(v) for v in values],
+                "context_id": ctx.handles["context_id"],
+                "values": values,
             }
         )
-        return response.get("ciphertext_id")
+        return response["ciphertext_id"]
 
     def decrypt(self, ctx: AdapterContext, ciphertext: Any) -> Any:
         proc: _HelperProcess = ctx.handles["helper"]
         response = proc.request(
             {
                 "op": "decrypt",
-                "context_id": ctx.handles.get("context_id", ""),
+                "context_id": ctx.handles["context_id"],
                 "ciphertext_id": ciphertext,
             }
         )
-        return response.get("values", [])
+        return list(response.get("values", []))
 
     def perturb_ciphertext_constant(
         self,
@@ -196,28 +244,49 @@ class LattigoAdapter(LibraryAdapter):
         *,
         component: int = 0,
     ) -> Any:
+        if _params_recognize_flooding(ctx.params):
+            raise NotImplementedError(
+                "lattigo helper has no native NOISE_FLOODING_DECRYPT path; "
+                "mitigated configs are routed through the static RiskCheck "
+                "(which recognizes lattigo-noise-flooding / "
+                "openfhe-noise-flooding-decrypt / etc.)."
+            )
         proc: _HelperProcess = ctx.handles["helper"]
+        # The helper accepts offset as either a JSON number (small ints
+        # round-trip cleanly) or a decimal string (production-bit-size
+        # delta = floor(Q/t) overflows int64). Send anything outside
+        # int64's safe-magnitude window as a string.
+        wire_offset: int | str = int(offset)
+        if abs(wire_offset) > (1 << 53) - 1:
+            wire_offset = str(int(offset))
         response = proc.request(
             {
                 "op": "perturb_constant",
-                "context_id": ctx.handles.get("context_id", ""),
+                "context_id": ctx.handles["context_id"],
                 "ciphertext_id": ciphertext,
-                "offset": int(offset),
+                "offset": wire_offset,
                 "component": int(component),
             }
         )
-        return response.get("ciphertext_id")
+        return response["ciphertext_id"]
 
     def plaintext_delta(self, ctx: AdapterContext, ciphertext: Any) -> int:
-        proc: _HelperProcess = ctx.handles["helper"]
-        response = proc.request(
-            {
-                "op": "plaintext_delta",
-                "context_id": ctx.handles.get("context_id", ""),
-                "ciphertext_id": ciphertext,
-            }
-        )
-        return int(response.get("delta", 0))
+        # The helper computes delta = floor(Q/t) once at setup and
+        # echoes it from plaintext_delta; the cached value matches.
+        return int(ctx.handles["delta"])
+
+    def polynomial_replay_metadata(
+        self, ctx: AdapterContext, ciphertext: Any
+    ) -> dict[str, Any]:
+        return {
+            "serialization_backend": "lattigo-bgv",
+            "polynomial_domain": "RNS evaluation form (NTT)",
+            "perturbation": "constant added per-tower to ciphertext component c0",
+            "plaintext_modulus": int(ctx.handles["plaintext_modulus"]),
+            "ciphertext_modulus_bits": int(ctx.handles["ciphertext_modulus_bits"]),
+            "dcrt_tower_count": int(ctx.handles["dcrt_tower_count"]),
+            "dcrt_moduli_bits": list(ctx.handles["dcrt_moduli_bits"]),
+        }
 
     def evaluator_fingerprint(self, ctx: AdapterContext) -> dict[str, Any]:
         return {

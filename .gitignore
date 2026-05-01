@@ -20,3 +20,6 @@ htmlcov/
 vendor/lattigo-helper/lattigo-helper
 vendor/lattigo-helper/fhe-replay-lattigo-helper
 vendor/tfhe-rs-helper/target/
+
+# Internal roadmap — kept local, not shipped to the repo
+docs/ROADMAP.md

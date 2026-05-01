@@ -423,16 +423,24 @@ def test_cheon_delta_for_falls_back_to_unit_when_no_handle():
     assert delta == 1
 
 
-def test_cheon_delta_for_raises_when_openfhe_missing_method():
-    """An openfhe-named adapter without `plaintext_delta` raises
-    NotImplementedError. The replay loop catches that and falls back."""
+def test_cheon_delta_for_falls_back_when_adapter_lacks_plaintext_delta():
+    """An adapter without `plaintext_delta` falls back to delta=1.
 
-    class _IncompleteOpenFHE:
-        name = "openfhe"
+    `_delta_for` is now capability-driven (hasattr check) rather than
+    name-keyed; any adapter missing the method gets the conservative
+    integer-modulus-units fallback. The OpenFHE adapter ships
+    `plaintext_delta` and is exercised end-to-end in
+    test_replay_against_openfhe_when_available; the lattigo adapter
+    likewise. So a regression that drops the method on a real adapter
+    would be caught by those tests, not by this contract guard.
+    """
 
-    ctx = AdapterContext(library="openfhe", scheme="BFV", params={})
-    with pytest.raises(NotImplementedError, match="plaintext_delta"):
-        Cheon2024_127()._delta_for(_IncompleteOpenFHE(), ctx, object())
+    class _NoDelta:
+        name = "future-fhe"
+
+    ctx = AdapterContext(library="future-fhe", scheme="BFV", params={})
+    delta = Cheon2024_127()._delta_for(_NoDelta(), ctx, object())
+    assert delta == 1
 
 
 def test_cheon_bisect_openfhe_raises_without_perturb_method():

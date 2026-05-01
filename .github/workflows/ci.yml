@@ -18,15 +18,27 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: vendor/lattigo-helper/go.sum
       - name: Install
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
+      - name: Build lattigo helper
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cd vendor/lattigo-helper
+          go build -o "$HOME/.local/bin/fhe-replay-lattigo-helper" .
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Go test (lattigo helper)
+        run: cd vendor/lattigo-helper && go test ./...
       - name: Ruff
         run: python -m ruff check .
       - name: Pytest
         run: python -m pytest -ra --cov=fhe_attack_replay
-      - name: CLI smoke
+      - name: CLI smoke (toy-lwe)
         run: |
           fhe-replay list all
           fhe-replay doctor
@@ -37,6 +49,14 @@ jobs:
           test "$rc" -eq 2
           test -s report.json
           test -s badge.svg
+      - name: CLI smoke (lattigo live replay)
+        run: |
+          set +e
+          fhe-replay run --lib lattigo --params examples/bfv-128-vulnerable.json --attacks cheon-2024-127 --output-json lattigo-report.json --quiet
+          rc=$?
+          set -e
+          test "$rc" -eq 2
+          test -s lattigo-report.json
       - name: Package
         if: matrix.python == '3.12'
         run: |

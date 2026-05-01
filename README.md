@@ -1,12 +1,15 @@
 # fhe-attack-replay
 
 > **Alpha.** `cheon-2024-127` runs as a real **live-oracle Replay** against
-> two adapters:
+> three adapters:
 > - `toy-lwe` (always available) — bisection-based encryption-noise
 >   recovery across 8 trials of 20 rounds each.
 > - `openfhe` (when `openfhe-python` is built locally) —
 >   polynomial-domain bisection against real OpenFHE BFV/BGV using serialized
 >   DCRT ciphertext mutation.
+> - `lattigo` (when `fhe-replay-lattigo-helper` is on PATH) —
+>   polynomial-domain bisection against real Lattigo BFV/BGV via a Go
+>   helper binary that drives the unified `schemes/bgv` context.
 >
 > Unmitigated configs report `VULNERABLE` (exit 2); noise-flooded configs
 > report `SAFE` (exit 0). The same module also runs as a **RiskCheck** on
@@ -153,6 +156,25 @@ native decrypt oracle. Replay evidence records
 `test=polynomial_domain_bisection`, `serialization_backend=openfhe-json`, the
 plaintext modulus, and DCRT tower metadata.
 
+For Lattigo BFV/BGV, the Go helper binary owns the keys and ciphertexts.
+Perturbation is a per-tower constant addition on `Value[0].Coeffs` while the
+ring is in evaluation form (Lattigo BGV defaults to NTT) — equivalent to
+adding a constant polynomial in the time domain. The Python adapter
+exchanges line-delimited JSON over stdin/stdout, with offsets sent as
+decimal strings when delta exceeds int64. Replay evidence records
+`serialization_backend=lattigo-bgv`,
+`polynomial_domain="RNS evaluation form (NTT)"`, the plaintext modulus, and
+the per-tower DCRT moduli sizes.
+
+```bash
+# Build the lattigo helper from source
+cd vendor/lattigo-helper && go build -o "$HOME/.local/bin/fhe-replay-lattigo-helper" .
+# Or download a pre-built binary from the GitHub Releases page and rename it
+# to `fhe-replay-lattigo-helper` on PATH.
+
+fhe-replay run --lib lattigo --params examples/bfv-128-vulnerable.json --attacks cheon-2024-127
+```
+
 ### `guo-qian-usenix24` — Non-worst-case noise-flooding RiskCheck (CKKS)
 
 Inspects `noise_flooding_strategy` (or `noise_flooding`) against the
@@ -227,14 +249,17 @@ no upstream PoC source is redistributed.
 |------------|------------------------------------------------------------|:-:|
 | `toy-lwe`  | none — pure Python, in-tree (CI validation only, not secure)| ✅ Replay |
 | `openfhe`  | `openfhe-python` (PyPI wheel = Linux x86_64 only; build from source on macOS/Windows) | ✅ Replay (BFV/BGV polynomial-domain bisection via serialized DCRT mutation) |
+| `lattigo`  | `fhe-replay-lattigo-helper` (Go binary on PATH; build from `vendor/lattigo-helper/` or grab a release asset) | ✅ Replay (BFV/BGV polynomial-domain bisection via per-tower constant addition in evaluation form) |
 | `seal`     | `tenseal` (microsoft/SEAL backend)                          | ❌ scaffold |
-| `lattigo`  | `fhe-replay-lattigo-helper` (Go binary, PATH; helper crate planned for v0.1) | ❌ scaffold |
-| `tfhe-rs`  | `fhe-replay-tfhe-rs-helper` (Rust binary, PATH; helper crate planned for v0.1) | ❌ scaffold |
+| `tfhe-rs`  | `fhe-replay-tfhe-rs-helper` (Rust binary, PATH; helper crate scaffold) | ❌ scaffold |
 
-> The Lattigo and tfhe-rs helper binaries are not yet shipped in this repo;
-> the `vendor/lattigo-helper/` and `vendor/tfhe-rs-helper/` projects are
-> tracked for v0.1. Until then, those adapters report their attacks as
-> RiskCheck-only or NOT_IMPLEMENTED.
+> The tfhe-rs helper is still a scaffold (only `hello`/`shutdown` ops);
+> its adapter falls back to RiskCheck or NOT_IMPLEMENTED until the
+> Rust-side encrypt/decrypt ops land. The lattigo helper covers
+> BFV/BGV; CKKS Replay is not yet wired (the `bgv` package handles
+> exact-integer schemes only). Lattigo configs with a recognized
+> `noise_flooding` mitigation label fall back to the static RiskCheck
+> because the helper does not yet implement software flooding.
 
 > When building openfhe-python from source for the live OpenFHE replay,
 > pin a release that emits big DCRT moduli as JSON strings during

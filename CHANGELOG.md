@@ -6,6 +6,46 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Lattigo live-oracle Cheon Replay (BFV/BGV)
+- **`cheon-2024-127` now runs as a real live-oracle Replay against
+  Lattigo BFV/BGV via the Go helper binary
+  (`fhe-replay-lattigo-helper`).** The helper drives a unified
+  `schemes/bgv` context, encrypts `0`, perturbs ciphertext component
+  c0 by adding a constant per-tower in evaluation form, and queries
+  the native decryptor across 8 trials. Replay evidence records
+  `serialization_backend=lattigo-bgv`,
+  `polynomial_domain="RNS evaluation form (NTT)"`, the plaintext
+  modulus, ciphertext modulus bits, and per-tower DCRT moduli sizes.
+- **Helper protocol bumped to `0.2.0`.** Adds `setup` / `encrypt` /
+  `decrypt` / `perturb_constant` / `plaintext_delta` ops backed by
+  real Lattigo v6 keys. Wire offsets accept either a JSON number or
+  a JSON decimal string so production-bit-size delta = floor(Q/t)
+  (commonly >2^53) round-trips without precision loss.
+- **`LattigoAdapter.capability.live_oracle = True`.** Mitigated
+  configurations (params with a recognized `noise_flooding` label
+  such as `lattigo-noise-flooding`,
+  `openfhe-noise-flooding-decrypt`, `eprint-2024-424`, …) raise
+  `NotImplementedError` from `perturb_ciphertext_constant`, so Cheon
+  dispatch falls back to the static RiskCheck (the helper does not
+  yet implement software flooding; a live `SAFE` verdict against a
+  mitigated config would otherwise be a false positive).
+- `cheon-2024-127._delta_for` is now capability-driven: any adapter
+  exposing `plaintext_delta` contributes its real `floor(Q/t)` to
+  the bisection, removing the hard-coded `if adapter.name ==
+  "openfhe":` branch.
+
+### Added — release-binaries workflow
+- **GitHub Actions workflow `release-binaries.yml`** cross-compiles
+  `fhe-replay-lattigo-helper` (Go) and `fhe-replay-tfhe-rs-helper`
+  (Rust) for linux-amd64, linux-arm64, darwin-amd64, darwin-arm64,
+  and windows-amd64 on tag push (`v*`), publishes them as release
+  assets with SHA256 checksums, and runs `go test ./...` on the
+  host triple. Users without a Go / Rust toolchain can drop the
+  matching binary on PATH and run live-oracle Replay immediately.
+- CI now builds the lattigo helper, runs `go test`, and adds a CLI
+  smoke test that runs `cheon-2024-127` against `examples/bfv-128-vulnerable.json`
+  through the live Lattigo path.
+
 ## [0.1.3] - 2026-04-27
 
 ### Added — `seal-python` adapter + per-NTT timing for `eprint-2025-867`

@@ -438,10 +438,12 @@ class Cheon2024_127(Attack):
         toy = ctx.handles.get("toy") if ctx.handles else None
         if toy is not None:
             return int(toy.delta)
-        if adapter.name == "openfhe":
-            plaintext_delta = getattr(adapter, "plaintext_delta", None)
-            if plaintext_delta is None:
-                raise NotImplementedError("OpenFHE adapter lacks plaintext_delta().")
+        # Capability-driven: any adapter exposing `plaintext_delta`
+        # contributes its real floor(Q/t) to the bisection. Avoids
+        # hard-coded `if adapter.name == ...` branches as new adapters
+        # land.
+        plaintext_delta = getattr(adapter, "plaintext_delta", None)
+        if plaintext_delta is not None:
             return int(plaintext_delta(ctx, ct_zero))
         # Fallback: arbitrary unit when delta is not available — the
         # threshold becomes effectively 1.0 in raw integer-modulus units.
